@@ -865,7 +865,7 @@ const RISE = 150;
 // slow lift off the ground, then the shot up through the crown
 const ease = (t) => Math.pow(t, 2.4);
 
-const AUTO_DELAY = 5; // seconds of stillness before the flight begins on its own
+const AUTO_DELAY = 0; // the flight begins by itself as soon as the page is up (and straight after replay)
 let autoAt = AUTO_DELAY;
 function launch() {
   if (flight) return;
