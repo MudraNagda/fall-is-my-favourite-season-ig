@@ -115,9 +115,13 @@
     color: var(--ui);
     text-align: center;
     opacity: 0;
-    transition: opacity 0.5s ease;
+    transform: scale(0.75);            /* eases up to full size as it fades in */
+    transition: opacity 1.1s ease, transform 1.6s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .msg.show { opacity: 1; }
+  .msg.show { opacity: 1; transform: scale(1); }
+  @media (prefers-reduced-motion: reduce) {
+    .msg { transform: none; transition: opacity 0.5s ease; }
+  }
   .track { height: 200vh; }  /* 100vh of scrolling carries the sky from blue to white */
   .site {
     position: relative;
@@ -907,7 +911,7 @@ for (const el of [document.getElementById('zoom'), replay]) {
 replay.addEventListener('click', () => land());
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
-const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
+const FLIGHT_S = (reduceMotion ? 4.6 : 6.4) / 1.2; // the climb through the trees, 1.2x faster than it first was
 const SKY_AT = 31; // ~90% of tree height: the second line of text appears here
 const RISE = 150;
 
