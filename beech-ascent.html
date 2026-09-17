@@ -147,7 +147,7 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(FOG, 34, 150);
 
 const camera = new THREE.PerspectiveCamera(96, 1, 0.05, 600);
-const GROUND_Y = 1.4;
+const GROUND_Y = 10; // start about a quarter of the way up the trunks
 camera.position.set(0, GROUND_Y, 0);
 
 // light: a low warm sun off to the upper left, cool sky fill, warm bounce
@@ -362,7 +362,7 @@ function addDab(p, family, scale) {
   // grown in once the camera lifts, so the ascent still pushes through foliage.
   let flightOnly = 0;
   if (Math.hypot(p.x, p.z) < p.y * 0.2) {
-    if (p.y < 14) return;
+    if (p.y < 18) return;
     if (p.y < 22 || rnd() < 0.75) flightOnly = 1;
   }
   // face mostly downward/upward (seen from below), random tilt and spin
@@ -588,7 +588,7 @@ const leafMat = new THREE.ShaderMaterial({
       vUv = (uv + vec2(mod(iMisc.y, 2.0), floor(iMisc.y / 2.0))) * 0.5;
       // flutter: each dab rocks on its stem
       float f = (sin(uTime * 0.9 + phase) * 0.22 + sin(uTime * 0.33 + phase * 1.7) * 0.14) * uWind;
-      float show = iMisc.z > 0.5 ? smoothstep(3.0, 11.0, cameraPosition.y) : 1.0;
+      float show = iMisc.z > 0.5 ? smoothstep(12.0, 20.0, cameraPosition.y) : 1.0;
       vec3 p = position * iScale * show;
       float c = cos(f), s = sin(f);
       p = vec3(p.x, p.y * c - p.z * s, p.y * s + p.z * c);
