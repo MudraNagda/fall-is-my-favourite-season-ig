@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Beech Ascent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@600&family=Instrument+Serif:ital@1&display=swap">
 <style>
   /* One committed visual world: an autumn beech wood seen from the ground.
      No light/dark split; every colour is painted explicitly. */
@@ -98,8 +98,8 @@
     margin: 0;
     padding: 0 24px;
     pointer-events: none;
-    font: 600 12px/1.6 'Inter', system-ui, -apple-system, sans-serif;
-    letter-spacing: 0.01em;
+    font: italic 400 19px/1.45 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+    letter-spacing: 0.005em;
     color: var(--ui);
     text-align: center;
     opacity: 0;
@@ -410,7 +410,7 @@ function dabAtlas() {
 // One merged buffer per tree for branches; one global buffer for twig lines;
 // one global instanced buffer for every leaf dab in the wood.
 class TubeBuilder {
-  constructor() { this.pos = []; this.nor = []; this.uv = []; this.flex = []; this.idx = []; this.count = 0; }
+  constructor() { this.pos = []; this.nor = []; this.uv = []; this.idx = []; this.count = 0; }
   // path: [{p: Vector3, r: number}], sides: ring resolution
   addPath(path, sides) {
     const base = this.count;
@@ -441,7 +441,6 @@ class TubeBuilder {
         this.pos.push(p.x + nx * rad, p.y + ny * rad, p.z + nz * rad);
         this.nor.push(nx, ny, nz);
         this.uv.push(j / sides, arc / 2.4);
-        this.flex.push(Math.min(1, Math.max(0, 1 - rad / 0.2))); // thin wood bends, thick wood barely moves
       }
     }
     const ring = sides + 1;
@@ -458,7 +457,6 @@ class TubeBuilder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
-    g.setAttribute('aFlex', new THREE.Float32BufferAttribute(this.flex, 1));
     g.setIndex(this.idx);
     return g;
   }
@@ -635,34 +633,7 @@ const LOD = {
   mid:  { maxDepth: 3, leafDepth: 2, leafStep: 0.5, dabsPerCluster: 4, spread: 0.7, dabScale: 1.4, branches: 10 },
   far:  { maxDepth: 3, leafDepth: 1, leafStep: 0.8, dabsPerCluster: 3, spread: 0.9, dabScale: 2.2, branches: 8 },
 };
-// Hover sway: one slow displacement field, shared by bark, twigs and leaves, so a
-// branch under the pointer bends and carries its twigs and leaves along with it.
-const SWAY = {
-  uTime: { value: 0 },
-  uHover: { value: 0 },                            // 0..1, how stirred the air under the pointer is
-  uPointer: { value: new THREE.Vector3(0, 1, 0) }, // direction the pointer looks along
-};
-const SWAY_GLSL = `
-  uniform float uTime, uHover; uniform vec3 uPointer;
-  vec3 hoverSway(vec3 p, float flex) {
-    float h = uHover * smoothstep(0.93, 0.992, dot(normalize(p - cameraPosition), uPointer));
-    // low spatial frequency: neighbours move together, like one limb
-    vec3 w = vec3(
-      sin(uTime * 1.7 + p.x * 0.12 + p.z * 0.08),
-      0.25 * sin(uTime * 2.1 + p.y * 0.15),
-      cos(uTime * 1.4 + p.z * 0.12 - p.x * 0.07));
-    return w * (0.6 * h * flex);
-  }`;
-function withSway(mat, flexExpr) {
-  mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, SWAY);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${flexExpr === 'aFlex' ? 'attribute float aFlex;' : ''}\n${SWAY_GLSL}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n  transformed += hoverSway(transformed, ${flexExpr});`);
-  };
-  return mat;
-}
-const barkMat = withSway(new THREE.MeshLambertMaterial({ map: barkTexture(), color: new THREE.Color('#fbeadb') }), 'aFlex');
+const barkMat = new THREE.MeshLambertMaterial({ map: barkTexture(), color: new THREE.Color('#fbeadb') });
 const trees = [];
 function ring(count, r0, r1, lod, families, hMin, hMax) {
   for (let i = 0; i < count; i++) {
@@ -697,7 +668,7 @@ scene.add(wood);
 // twigs: the finest reaching lines, dark against the sky
 const twigGeo = new THREE.BufferGeometry();
 twigGeo.setAttribute('position', new THREE.Float32BufferAttribute(twigPos, 3));
-const twigs = new THREE.LineSegments(twigGeo, withSway(new THREE.LineBasicMaterial({ color: new THREE.Color('#4a3424'), fog: true }), '1.0'));
+const twigs = new THREE.LineSegments(twigGeo, new THREE.LineBasicMaterial({ color: new THREE.Color('#4a3424'), fog: true }));
 twigs.frustumCulled = false;
 scene.add(twigs);
 
@@ -720,29 +691,23 @@ const leafMat = new THREE.ShaderMaterial({
   side: THREE.DoubleSide,
   uniforms: {
     uMap: { value: dabAtlas() },
-    uTime: SWAY.uTime,
+    uTime: { value: 0 },
     uWind: { value: reduceMotion ? 0 : 1 },
     uFogColor: { value: FOG },
     uFogRange: { value: new THREE.Vector2(34, 150) },
     uSun: { value: SUN_DIR },
-    uPointer: SWAY.uPointer,
-    uHover: SWAY.uHover,
   },
   vertexShader: `
     attribute vec3 iPos; attribute vec4 iQuat; attribute float iScale;
     attribute vec3 iColA; attribute vec3 iColB; attribute vec4 iMisc;
-    uniform float uWind; uniform vec2 uFogRange; uniform vec3 uSun;
-    ${SWAY_GLSL}
+    uniform float uTime, uWind; uniform vec2 uFogRange; uniform vec3 uSun;
     varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
     vec3 qrot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
     void main() {
       float phase = iMisc.x;
       vUv = (uv + vec2(mod(iMisc.y, 2.0), floor(iMisc.y / 2.0))) * 0.5;
       // flutter: each dab rocks on its stem
-      // leaves under the pointer get stirred: a soft-edged cone around its ray
-      float hov = uHover * smoothstep(0.955, 0.995, dot(normalize(iPos - cameraPosition), uPointer));
       float f = (sin(uTime * 0.9 + phase) * 0.22 + sin(uTime * 0.33 + phase * 1.7) * 0.14) * uWind;
-      f += sin(uTime * 3.4 + phase * 3.0) * 0.22 * hov; // a little extra tremble as the limb moves
       float show = iMisc.z > 0.5 ? smoothstep(12.0, 20.0, cameraPosition.y) : 1.0;
       vec3 p = position * iScale * show;
       float c = cos(f), s = sin(f);
@@ -752,7 +717,6 @@ const leafMat = new THREE.ShaderMaterial({
       float sway = 0.08 + 0.16 * clamp(world.y / 30.0, 0.0, 1.0);
       float gust = 0.7 + 0.3 * sin(uTime * 0.21 + world.x * 0.05);
       world.xz += vec2(sin(uTime * 0.45 + phase), cos(uTime * 0.34 + phase * 0.7)) * sway * gust * uWind;
-      world += hoverSway(iPos, 1.0); // carried by the branch it hangs from
       float dist = length(world - cameraPosition);
       vFog = smoothstep(uFogRange.x, uFogRange.y, dist);
       vNear = smoothstep(0.12, 0.8, dist);
@@ -910,14 +874,6 @@ function land() {
   });
 }
 
-const pointerNdc = new THREE.Vector2(0, 0);
-let hoverGoal = 0, hoverIdle = 0;
-addEventListener('pointermove', (e) => {
-  pointerNdc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
-  hoverGoal = 1;
-  hoverIdle = 0;
-});
-addEventListener('pointerleave', () => { hoverGoal = 0; });
 addEventListener('pointerdown', (e) => { if (e.button === 0) { startMusic(); launch(); } });
 addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startMusic(); launch(); }
@@ -1255,13 +1211,6 @@ function frame() {
   const topY = heightFor(1) - 0.5; // a touch early, since the slider eases in and never quite lands
   if (yBefore < topY && camera.position.y >= topY) heroDue = true;
   flyLeaves(t, dt, camera.position.y >= topY);
-
-  // hover: leaves under the pointer stir while it moves, and settle when it rests
-  hoverIdle += dt;
-  if (hoverIdle > 0.6) hoverGoal = 0;
-  const hv = leafMat.uniforms.uHover;
-  hv.value += ((flight || reduceMotion ? 0 : hoverGoal) - hv.value) * 0.06;
-  leafMat.uniforms.uPointer.value.set(pointerNdc.x, pointerNdc.y, 0.5).unproject(camera).sub(camera.position).normalize();
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
