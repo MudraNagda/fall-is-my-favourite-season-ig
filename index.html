@@ -21,12 +21,15 @@
     --paper: #f6ecd9;
     --ui: rgba(255, 255, 255, 0.75); /* text and controls: white on blue, deep sky blue on the wash */
   }
-  html, body { height: 100%; }
+  /* The hero layers are all fixed to the viewport. The page scrolls over a tall
+     track: that scroll distance is what turns the sky from blue to white. The
+     rest of the site goes in <main class="site">, which slides up over the hero. */
+  html.locked, html.locked body { overflow: hidden; } /* no scrolling until the flight has landed */
   body {
     margin: 0;
     background: var(--sky);
     color: var(--paper);
-    overflow: hidden;
+    overflow-x: hidden;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-user-select: none;
     user-select: none;
@@ -115,6 +118,31 @@
     transition: opacity 0.5s ease;
   }
   .msg.show { opacity: 1; }
+  .track { height: 200vh; }  /* 100vh of scrolling carries the sky from blue to white */
+  .site {
+    position: relative;
+    z-index: 5;               /* above every fixed hero layer */
+    background: #fbfaf4;
+    color: #02387A;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* small cue that the page continues, shown once the flight has landed */
+  .scrollcue {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 18px 24px;
+    font: 600 12px/1 'Inter', system-ui, -apple-system, sans-serif;
+    letter-spacing: 0.01em;
+    color: var(--ui);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.6s ease;
+  }
+  .scrollcue.show { opacity: 1; }
   /* plain text button on the bottom edge, shown once the flight is over */
   .replay {
     position: fixed;
@@ -204,12 +232,18 @@
 <p class="msg" id="msg"></p>
 <canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
+<p class="scrollcue" id="scrollcue" aria-hidden="true">scroll</p>
 <button class="replay" id="replay" type="button">replay</button>
 <!-- the height slider is hidden for now: remove the "hidden" attribute to bring it back -->
 <label class="zoom" id="zoom" hidden aria-label="Camera height, as a percentage of tree height">
   <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
   <input id="zoomRange" type="range" min="0" max="125" step="1" value="10" aria-valuetext="10%">
 </label>
+
+<div class="track" aria-hidden="true"></div>
+<!-- The rest of the site (projects, case studies) goes here. It sits on the same
+     white the sky turns into, and scrolls up over the hero. -->
+<main class="site" id="site"></main>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -827,9 +861,16 @@ let skyStart = null; // moment the camera clears the treetops
 let LEAF_TOP = 0;
 for (let i = 1; i < leaves.pos.length; i += 3) LEAF_TOP = Math.max(LEAF_TOP, leaves.pos[i]);
 LEAF_TOP += 1;
-let clearT = null;   // moment the last leaf left the frame
-// add ?wash=5 to the address to watch the wash in slow motion while tuning it
-const WASH_DELAY = 1.0, WASH_S = Number(new URLSearchParams(location.search).get('wash')) || 0.7;
+// The blue-to-white wash is scrubbed by scrolling, not by time: once the flight
+// has landed in the blue, the first screen-height of scroll carries the sky to
+// the white that the rest of the site sits on. Scrolling back up returns the blue.
+const scrollcue = document.getElementById('scrollcue');
+let landed = false;
+history.scrollRestoration = 'manual';
+scrollTo(0, 0);
+document.documentElement.classList.add('locked');
+const smoother = (x) => { const k = Math.min(1, Math.max(0, x)); return k * k * k * (k * (k * 6 - 15) + 10); };
+const washProgress = () => (landed ? Math.min(1, Math.max(0, scrollY / Math.max(1, innerHeight))) : 0);
 function say(html) {
   if (!html) { msg.classList.remove('show'); return; }
   msg.innerHTML = html;
@@ -886,7 +927,10 @@ function land() {
   flight = null;
   autoAt = clock.getElapsedTime() + AUTO_DELAY; // replay: rest again, then fly again
   skyStart = null;
-  clearT = null;
+  landed = false;
+  scrollTo(0, 0);
+  document.documentElement.classList.add('locked');
+  scrollcue.classList.remove('show');
   replay.classList.remove('show');
   looseLeaves.length = 0; // the opening never has loose leaves
   leavesMade = 0;
@@ -1308,14 +1352,18 @@ function frame() {
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
-    // blue holds until a second after the last leaf has left the frame, then a quick wash
-    if (clearT === null && camera.position.y > LEAF_TOP) clearT = t;
-    const wash = clearT === null ? -1 : t - clearT - WASH_DELAY; // seconds into the wash
-    // one even brightening of the whole sky, eased in and out (smootherstep) so it
-    // neither starts nor lands abruptly
-    const smoother = (x) => { const k = Math.min(1, Math.max(0, x)); return k * k * k * (k * (k * 6 - 15) + 10); };
-    sky.material.uniforms.uLift.value = smoother(wash / WASH_S);
-    inkFor(clearT === null ? 0 : sstep(0.0, 0.32, wash)); // the words turn with the sky
+    // landed in the blue: scrolling is unlocked and now drives the wash
+    if (u >= 1 && !landed) {
+      landed = true;
+      document.documentElement.classList.remove('locked');
+      scrollcue.classList.add('show');
+    }
+    const wash = washProgress(); // 0 at the top of the page, 1 after a screen-height of scroll
+    // one even brightening of the whole sky, eased in and out so it neither starts
+    // nor lands abruptly however the visitor scrolls
+    sky.material.uniforms.uLift.value = smoother(wash);
+    inkFor(sstep(0.0, 0.45, wash)); // the words turn with the sky
+    if (wash > 0.02) scrollcue.classList.remove('show'); else if (landed) scrollcue.classList.add('show');
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
@@ -1328,12 +1376,10 @@ function frame() {
     for (const { sp, base } of puffs) sp.material.opacity = base * cloudFade * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
     // the flat white layer only settles in over the last stretch, once the sky is
     // already nearly white, so its arrival cannot be seen
-    if (wash >= 0) {
-      flash.classList.add('on');
-      flash.style.opacity = smoother((wash - WASH_S * 0.55) / (WASH_S * 0.55)).toFixed(3);
-    }
-    // no return on its own: the white holds with the words on it until replay is pressed
-    if (wash > WASH_S + 0.6 || el > FLIGHT_S + 0.8) replay.classList.add('show');
+    flash.classList.add('on');
+    flash.style.opacity = smoother((wash - 0.55) / 0.45).toFixed(3);
+    // replay waits on the white, at the end of the wash
+    replay.classList.toggle('show', wash > 0.98);
   } else {
     // at rest the slider sets how far up the trunks the viewer floats
     const goalY = heightFor(heightPct);
