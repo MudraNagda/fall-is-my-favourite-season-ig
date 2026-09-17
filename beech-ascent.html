@@ -710,7 +710,6 @@ function inkFor(white) {
   const c = Math.round(255 * (1 - white));
   msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
 }
-say('click to soar');
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
 const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
@@ -729,7 +728,7 @@ function land() {
   flight = null;
   skyStart = null;
   inkFor(0);
-  say('click to soar');
+  say(null);
   for (const { sp, base } of puffs) sp.material.opacity = base;
   camera.position.set(0, GROUND_Y, 0);
   camera.fov = 96;
