@@ -154,6 +154,7 @@
     text-align: right;
     opacity: 0.8;
   }
+  .zoom[hidden] { display: none; }
   .zoom.off { opacity: 0.35; pointer-events: none; }
   .zoom { transition: opacity 0.4s ease; }
   .zoom input {
@@ -199,7 +200,8 @@
 <canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
 <button class="replay" id="replay" type="button">replay</button>
-<label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
+<!-- the height slider is hidden for now: remove the "hidden" attribute to bring it back -->
+<label class="zoom" id="zoom" hidden aria-label="Camera height, as a percentage of tree height">
   <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
   <input id="zoomRange" type="range" min="0" max="125" step="1" value="10" aria-valuetext="10%">
 </label>
