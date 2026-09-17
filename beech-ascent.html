@@ -76,7 +76,7 @@
   .flash {
     background: #fbfaf4;
     opacity: 0;
-    transition: opacity 0.9s ease;
+    transition: opacity 0.4s ease;
   }
   .flash.on { opacity: 1; }
   /* one line of guidance in the centre of the sky */
@@ -810,8 +810,8 @@ function frame() {
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
-    sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
-    inkFor(sstep(0.8, 0.97, u));
+    sky.material.uniforms.uLift.value = Math.min(1, Math.max(0, (u - 0.84) / 0.09)); // quick wash: ~0.6s
+    inkFor(sstep(0.82, 0.87, u)); // text goes dark just ahead of the wash so it never matches the sky
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
@@ -820,7 +820,7 @@ function frame() {
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
-    if (u > 0.86) flash.classList.add('on');
+    if (u > 0.9) flash.classList.add('on');
     if (u >= 1 && el > FLIGHT_S + 0.8) land();
   } else if (!reduceMotion) {
     // lying still: a breath of drift
