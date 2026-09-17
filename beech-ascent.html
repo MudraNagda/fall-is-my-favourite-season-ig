@@ -35,18 +35,13 @@
     /* faded-print look: a little less saturation and contrast, a warm cast */
     filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03);
   }
-  /* one loose leaf that crosses the frame when the camera reaches the treetops */
+  /* loose leaves drifting across the frame once the camera reaches the treetops */
   .leaf {
     position: fixed;
-    left: 0;
-    top: 0;
-    width: 56px;
-    height: 56px;
-    margin: -28px 0 0 -28px;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
-    visibility: hidden;
-    will-change: transform;
-    filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03) drop-shadow(0 2px 3px rgba(40, 20, 0, 0.18));
   }
   /* painterly finish: paper grain + a warm vignette pulling the corners in,
      the way the photo's edges fall into shadowed foliage */
@@ -191,7 +186,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
-<canvas class="leaf" id="leaf" width="128" height="128"></canvas>
+<canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
 <div class="wash"></div>
 <div class="leak"></div>
@@ -201,7 +196,7 @@
 <button class="replay" id="replay" type="button">replay</button>
 <label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
   <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
-  <input id="zoomRange" type="range" min="0" max="5" step="1" value="0" aria-valuetext="0%">
+  <input id="zoomRange" type="range" min="0" max="125" step="1" value="10" aria-valuetext="10%">
 </label>
 
 <script type="module">
@@ -263,7 +258,7 @@ scene.fog = new THREE.Fog(FOG, 34, 150);
 
 const camera = new THREE.PerspectiveCamera(96, 1, 0.05, 600);
 const GROUND_Y = 10; // start about a quarter of the way up the trunks
-camera.position.set(0, GROUND_Y, 0);
+camera.position.set(0, GROUND_Y, 0); // moved to the 10% start once the tree height is known
 
 // light: a low warm sun off to the upper left, cool sky fill, warm bounce
 scene.add(new THREE.HemisphereLight(new THREE.Color('#a9c9ec'), new THREE.Color('#8a6a4a'), 1.7));
@@ -693,18 +688,23 @@ const leafMat = new THREE.ShaderMaterial({
     uFogColor: { value: FOG },
     uFogRange: { value: new THREE.Vector2(34, 150) },
     uSun: { value: SUN_DIR },
+    uPointer: { value: new THREE.Vector3(0, 1, 0) }, // direction the pointer looks along
+    uHover: { value: 0 },                            // 0..1, how stirred the air under it is
   },
   vertexShader: `
     attribute vec3 iPos; attribute vec4 iQuat; attribute float iScale;
     attribute vec3 iColA; attribute vec3 iColB; attribute vec4 iMisc;
-    uniform float uTime, uWind; uniform vec2 uFogRange; uniform vec3 uSun;
+    uniform float uTime, uWind, uHover; uniform vec2 uFogRange; uniform vec3 uSun, uPointer;
     varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
     vec3 qrot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
     void main() {
       float phase = iMisc.x;
       vUv = (uv + vec2(mod(iMisc.y, 2.0), floor(iMisc.y / 2.0))) * 0.5;
       // flutter: each dab rocks on its stem
+      // leaves under the pointer get stirred: a soft-edged cone around its ray
+      float hov = uHover * smoothstep(0.955, 0.995, dot(normalize(iPos - cameraPosition), uPointer));
       float f = (sin(uTime * 0.9 + phase) * 0.22 + sin(uTime * 0.33 + phase * 1.7) * 0.14) * uWind;
+      f += sin(uTime * 4.2 + phase * 3.0) * 0.5 * hov;
       float show = iMisc.z > 0.5 ? smoothstep(12.0, 20.0, cameraPosition.y) : 1.0;
       vec3 p = position * iScale * show;
       float c = cos(f), s = sin(f);
@@ -714,6 +714,7 @@ const leafMat = new THREE.ShaderMaterial({
       float sway = 0.08 + 0.16 * clamp(world.y / 30.0, 0.0, 1.0);
       float gust = 0.7 + 0.3 * sin(uTime * 0.21 + world.x * 0.05);
       world.xz += vec2(sin(uTime * 0.45 + phase), cos(uTime * 0.34 + phase * 0.7)) * sway * gust * uWind;
+      world.xz += vec2(sin(uTime * 2.6 + phase * 2.0), cos(uTime * 2.2 + phase)) * 0.22 * hov;
       float dist = length(world - cameraPosition);
       vFog = smoothstep(uFogRange.x, uFogRange.y, dist);
       vNear = smoothstep(0.12, 0.8, dist);
@@ -815,13 +816,16 @@ function inkFor(white) {
 
 // camera height slider: 0% is where the scene starts, 100% is the top of the
 // trees. Snapped stops, eased between while the viewer is at rest.
-const STOPS = [0, 0.25, 0.5, 0.75, 1, 1.25];
+// The scene opens at 10%; once touched, the slider snaps to steps of 25.
 const zoomBox = document.getElementById('zoom');
 const zoomRange = document.getElementById('zoomRange');
-let heightPct = 0;
+let heightPct = 0.1;
 const heightFor = (pct) => GROUND_Y + pct * (LEAF_TOP - 1 - GROUND_Y);
+camera.position.y = heightFor(heightPct);
 zoomRange.addEventListener('input', () => {
-  heightPct = STOPS[Number(zoomRange.value)];
+  const snapped = Math.round(Number(zoomRange.value) / 25) * 25;
+  zoomRange.value = snapped;
+  heightPct = snapped / 100;
   zoomRange.setAttribute('aria-valuetext', `${Math.round(heightPct * 100)}%`);
 });
 const replay = document.getElementById('replay');
@@ -865,6 +869,14 @@ function land() {
   });
 }
 
+const pointerNdc = new THREE.Vector2(0, 0);
+let hoverGoal = 0, hoverIdle = 0;
+addEventListener('pointermove', (e) => {
+  pointerNdc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  hoverGoal = 1;
+  hoverIdle = 0;
+});
+addEventListener('pointerleave', () => { hoverGoal = 0; });
 addEventListener('pointerdown', (e) => { if (e.button === 0) { startMusic(); launch(); } });
 addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startMusic(); launch(); }
@@ -975,13 +987,26 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-// ---- the loose leaf -----------------------------------------------------------
-// Painted once on a small canvas, then flown in screen space: from the middle
-// of the bottom edge toward the middle of the right edge, and halfway there the
-// push gives out and it sinks in a soft zigzag.
-const leafEl = document.getElementById('leaf');
-(function paintLeaf() {
-  const c = leafEl.getContext('2d');
+// ---- loose leaves ---------------------------------------------------------------
+// Painted once as a few sprites, then flown in screen space on an overlay canvas.
+// Each leaf gets a push in some direction, the push gives out, and it sinks
+// slowly in a soft zigzag until it drifts off the bottom. The first one always
+// runs from the middle of the bottom edge toward the middle of the right edge;
+// the rest start in random places with their own variations of the same motion.
+const leafCanvas = document.getElementById('leaf');
+const lctx = leafCanvas.getContext('2d');
+function sizeLeaves() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  leafCanvas.width = Math.ceil(innerWidth * dpr);
+  leafCanvas.height = Math.ceil(innerHeight * dpr);
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', sizeLeaves);
+sizeLeaves();
+function leafSprite(stops) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
   c.translate(64, 64);
   const body = () => {
     c.beginPath();
@@ -993,60 +1018,98 @@ const leafEl = document.getElementById('leaf');
     c.closePath();
   };
   const g = c.createLinearGradient(-30, -50, 30, 50);
-  g.addColorStop(0, '#F5BB00');
-  g.addColorStop(0.55, '#EC9F05');
-  g.addColorStop(1, '#BF3100');
+  stops.forEach((col, i) => g.addColorStop(i / (stops.length - 1), col));
   body(); c.fillStyle = g; c.fill();
   c.save(); body(); c.clip();
-  c.strokeStyle = 'rgba(120, 50, 0, 0.45)'; c.lineWidth = 1.4; c.lineCap = 'round';
+  c.strokeStyle = 'rgba(110, 50, 0, 0.4)'; c.lineWidth = 1.4; c.lineCap = 'round';
   for (let i = 0; i < 7; i++) {                        // side veins off the midrib
     const y = -40 + i * 12;
     for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(0, y + 6); c.quadraticCurveTo(sx * 14, y, sx * 34, y - 10); c.stroke(); }
   }
   c.restore();
-  c.strokeStyle = 'rgba(110, 45, 0, 0.7)'; c.lineWidth = 2.2;
+  c.strokeStyle = 'rgba(100, 45, 0, 0.65)'; c.lineWidth = 2.2;
   c.beginPath(); c.moveTo(0, -54); c.lineTo(0, 62); c.stroke(); // midrib and stalk
-  body(); c.strokeStyle = 'rgba(140, 60, 0, 0.55)'; c.lineWidth = 1.6; c.stroke();
-})();
-let looseLeaf = null, lastT = 0;
-function releaseLeaf() {
-  if (looseLeaf) return;
-  const W = innerWidth, H = innerHeight;
-  const from = { x: W / 2, y: H + 40 }, to = { x: W + 40, y: H / 2 };
-  const T = 4.2; // seconds the full bottom-to-right crossing would take
-  looseLeaf = {
-    x: from.x, y: from.y, from, to,
-    vx: (to.x - from.x) / T, vy: (to.y - from.y) / T,
-    push: { x: (to.x - from.x) / T, y: (to.y - from.y) / T },
-    fallAt: null, spin: Math.random() * 6,
-  };
-  leafEl.style.visibility = 'visible';
+  body(); c.strokeStyle = 'rgba(130, 60, 0, 0.5)'; c.lineWidth = 1.6; c.stroke();
+  return cv;
 }
-function flyLeaf(t, dt) {
-  const L = looseLeaf;
-  if (!L) return;
-  const total = Math.hypot(L.to.x - L.from.x, L.to.y - L.from.y);
-  const gone = Math.hypot(L.x - L.from.x, L.y - L.from.y);
-  // the push starts to give out a little before halfway, so the turn lands on the midpoint
-  if (L.fallAt === null && gone > total * 0.4) L.fallAt = t;
-  let wantX = L.push.x, wantY = L.push.y, ease = 0.08;
-  if (L.fallAt !== null) {
-    const f = t - L.fallAt;
-    // the push dies away; a slow sink with a side-to-side sway takes over
-    wantX = Math.sin(f * 2.4) * 130;
-    wantY = Math.min(62, 12 + f * 8);
-    ease = 0.05;
+// the four swatches again, a touch muted to sit with the faded print
+const SPRITES = [
+  leafSprite(['#e9b417', '#de9a1c', '#b3421a']),
+  leafSprite(['#e6b21a', '#e2a51c']),
+  leafSprite(['#dc961d', '#b23c18']),
+  leafSprite(['#8f9f1e', '#d8ae22']),
+];
+const looseLeaves = [];
+const MAX_LEAVES = 12;
+let lastT = 0, nextLeafAt = 0, heroDue = false;
+function spawnLeaf(t, hero) {
+  const W = innerWidth, H = innerHeight;
+  let from, aim;
+  if (hero) {
+    from = { x: W / 2, y: H + 40 };
+    aim = { x: W + 40, y: H / 2 };
+  } else {
+    // start somewhere along the bottom or the two sides, aimed at a random spot inside
+    const edge = Math.random();
+    if (edge < 0.45) from = { x: Math.random() * W, y: H + 40 };
+    else if (edge < 0.725) from = { x: -40, y: H * (0.25 + Math.random() * 0.7) };
+    else from = { x: W + 40, y: H * (0.25 + Math.random() * 0.7) };
+    aim = { x: W * (0.12 + Math.random() * 0.76), y: H * (0.08 + Math.random() * 0.5) };
   }
-  L.vx += (wantX - L.vx) * ease;
-  L.vy += (wantY - L.vy) * ease;
-  L.x += L.vx * dt;
-  L.y += L.vy * dt;
-  // lean into the direction of travel and flutter a little
-  const lean = Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * 2.3 + L.spin) * 0.18;
-  const flutter = 0.72 + 0.28 * Math.cos(t * 3.1 + L.spin);
-  const roll = L.fallAt === null ? t * 1.4 + L.spin : lean + (L.fallAt * 1.4 + L.spin) * Math.exp(-(t - L.fallAt) * 0.9);
-  leafEl.style.transform = `translate(${L.x.toFixed(1)}px, ${L.y.toFixed(1)}px) rotate(${roll.toFixed(3)}rad) scaleX(${flutter.toFixed(3)})`;
-  if (L.y > innerHeight + 60 || L.x > innerWidth + 80) { looseLeaf = null; leafEl.style.visibility = 'hidden'; }
+  const T = hero ? 4.2 : 3.6 + Math.random() * 2.4;       // seconds a full crossing would take
+  const total = Math.hypot(aim.x - from.x, aim.y - from.y);
+  looseLeaves.push({
+    x: from.x, y: from.y, from, total,
+    push: { x: (aim.x - from.x) / T, y: (aim.y - from.y) / T },
+    vx: (aim.x - from.x) / T, vy: (aim.y - from.y) / T,
+    giveOut: hero ? 0.4 : 0.3 + Math.random() * 0.4,       // fraction of the way before the push dies
+    fallAt: null,
+    swayHz: hero ? 2.4 : 1.7 + Math.random() * 1.1,
+    swayAmp: hero ? 130 : 80 + Math.random() * 90,
+    sink: hero ? 34 : 22 + Math.random() * 18,             // slow terminal fall, px per second
+    size: hero ? 56 : 30 + Math.random() * 40,
+    sprite: hero ? SPRITES[0] : SPRITES[Math.floor(Math.random() * SPRITES.length)],
+    spin: Math.random() * 6.3, spinRate: (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.9),
+    born: t,
+  });
+}
+function flyLeaves(t, dt, aboveTrees) {
+  // a steady trickle for as long as the camera is at or above the treetops
+  if (heroDue) { spawnLeaf(t, true); heroDue = false; nextLeafAt = t + 0.9; }
+  else if (aboveTrees && t > nextLeafAt && looseLeaves.length < MAX_LEAVES) {
+    spawnLeaf(t, false);
+    nextLeafAt = t + 0.8 + Math.random() * 1.6;
+  }
+  lctx.clearRect(0, 0, innerWidth, innerHeight);
+  for (let i = looseLeaves.length - 1; i >= 0; i--) {
+    const L = looseLeaves[i];
+    const gone = Math.hypot(L.x - L.from.x, L.y - L.from.y);
+    if (L.fallAt === null && gone > L.total * L.giveOut) L.fallAt = t;
+    let wantX = L.push.x, wantY = L.push.y, ease = 0.08;
+    if (L.fallAt !== null) {
+      const f = t - L.fallAt;
+      wantX = Math.sin(f * L.swayHz) * L.swayAmp;          // side to side
+      wantY = Math.min(L.sink, 8 + f * 5);                 // and slowly down
+      ease = 0.05;
+    }
+    L.vx += (wantX - L.vx) * ease;
+    L.vy += (wantY - L.vy) * ease;
+    L.x += L.vx * dt;
+    L.y += L.vy * dt;
+    if (L.y > innerHeight + 70 || L.x < -120 || L.x > innerWidth + 120) { looseLeaves.splice(i, 1); continue; }
+    // tumbling while pushed; leaning into each swing and fluttering while it sinks
+    const lean = Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * 2.3 + L.spin) * 0.18;
+    const tumble = (L.fallAt === null ? t : L.fallAt) * 1.4 * L.spinRate + L.spin;
+    const roll = L.fallAt === null ? tumble : lean + tumble * Math.exp(-(t - L.fallAt) * 0.9);
+    const flutter = 0.7 + 0.3 * Math.cos(t * 3.1 + L.spin);
+    lctx.save();
+    lctx.translate(L.x, L.y);
+    lctx.rotate(roll);
+    lctx.scale(flutter, 1);
+    lctx.globalAlpha = Math.min(1, (t - L.born) * 2);
+    lctx.drawImage(L.sprite, -L.size / 2, -L.size / 2, L.size, L.size);
+    lctx.restore();
+  }
 }
 
 // ---- film grain -------------------------------------------------------------
@@ -1141,8 +1204,15 @@ function frame() {
   camera.lookAt(target);
   // entering 100%: the camera has just risen through the treetops
   const topY = heightFor(1) - 0.5; // a touch early, since the slider eases in and never quite lands
-  if (yBefore < topY && camera.position.y >= topY) releaseLeaf();
-  flyLeaf(t, dt);
+  if (yBefore < topY && camera.position.y >= topY) heroDue = true;
+  flyLeaves(t, dt, camera.position.y >= topY);
+
+  // hover: leaves under the pointer stir while it moves, and settle when it rests
+  hoverIdle += dt;
+  if (hoverIdle > 0.6) hoverGoal = 0;
+  const hv = leafMat.uniforms.uHover;
+  hv.value += ((flight || reduceMotion ? 0 : hoverGoal) - hv.value) * 0.06;
+  leafMat.uniforms.uPointer.value.set(pointerNdc.x, pointerNdc.y, 0.5).unproject(camera).sub(camera.position).normalize();
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
