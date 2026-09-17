@@ -13,6 +13,7 @@
     --sky: #0466C8;
     --ink: #2a1d14;
     --paper: #f6ecd9;
+    --ui: rgba(255, 255, 255, 0.75); /* text and controls: white on blue, black on the wash */
   }
   html, body { height: 100%; }
   body {
@@ -90,12 +91,86 @@
     pointer-events: none;
     font: 600 12px/1.6 'Inter', system-ui, -apple-system, sans-serif;
     letter-spacing: 0.01em;
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--ui);
     text-align: center;
     opacity: 0;
     transition: opacity 0.5s ease;
   }
   .msg.show { opacity: 1; }
+  /* plain text button on the bottom edge, shown once the flight is over */
+  .replay {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 18px 24px;
+    border: 0;
+    background: none;
+    font: 600 12px/1 'Inter', system-ui, -apple-system, sans-serif;
+    letter-spacing: 0.01em;
+    color: var(--ui);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+  .replay.show { opacity: 1; pointer-events: auto; }
+  .replay:focus-visible, .zoom input:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
+  /* zoom: a hairline on the right edge with four stops */
+  .zoom {
+    position: fixed;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    height: 132px;
+    color: var(--ui);
+    font: 600 10px/1 'Inter', system-ui, -apple-system, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .zoom ol {
+    list-style: none;
+    margin: 0;
+    padding: 1px 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    text-align: right;
+    opacity: 0.8;
+  }
+  .zoom input {
+    -webkit-appearance: none;
+    appearance: none;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 14px;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    color: inherit;
+    background: linear-gradient(currentColor, currentColor) center / 1px 100% no-repeat;
+    cursor: pointer;
+  }
+  .zoom input::-webkit-slider-runnable-track { background: transparent; }
+  .zoom input::-moz-range-track { background: transparent; }
+  .zoom input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: currentColor;
+    border: 0;
+  }
+  .zoom input::-moz-range-thumb {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: currentColor;
+    border: 0;
+  }
 
 </style>
 </head>
@@ -107,6 +182,11 @@
 <div class="vignette"></div>
 <div class="flash" id="flash"></div>
 <p class="msg" id="msg"></p>
+<button class="replay" id="replay" type="button">replay</button>
+<label class="zoom" id="zoom" aria-label="Camera zoom">
+  <ol aria-hidden="true"><li>120</li><li>100</li><li>10</li><li>5</li></ol>
+  <input id="zoomRange" type="range" min="0" max="3" step="1" value="2" aria-valuetext="100%">
+</label>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -714,8 +794,24 @@ function say(html) {
 // white over blue sky, darkening to black as the sky washes out
 function inkFor(white) {
   const c = Math.round(255 * (1 - white));
-  msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
+  document.documentElement.style.setProperty('--ui', `rgba(${c}, ${c}, ${c}, 0.75)`);
 }
+
+// zoom: four snapped lens settings, eased between in log space
+const ZOOMS = [0.05, 0.1, 1, 1.2];
+const zoomRange = document.getElementById('zoomRange');
+let zoomGoal = 1;
+zoomRange.addEventListener('input', () => {
+  zoomGoal = ZOOMS[Number(zoomRange.value)];
+  zoomRange.setAttribute('aria-valuetext', `${Math.round(zoomGoal * 100)}%`);
+});
+const replay = document.getElementById('replay');
+// controls must not start a flight
+for (const el of [document.getElementById('zoom'), replay]) {
+  el.addEventListener('pointerdown', (e) => e.stopPropagation());
+  el.addEventListener('keydown', (e) => e.stopPropagation());
+}
+replay.addEventListener('click', () => land());
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
 const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
@@ -734,6 +830,7 @@ function land() {
   flight = null;
   skyStart = null;
   clearT = null;
+  replay.classList.remove('show');
   inkFor(0);
   say(null);
   for (const { sp, base } of puffs) sp.material.opacity = base;
@@ -927,8 +1024,8 @@ function frame() {
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
     if (wash > WASH_S * 0.6) flash.classList.add('on');
-    // hold the white with the words on it for a moment, then return
-    if (wash > WASH_S + 1.6 || el > FLIGHT_S + 0.8) land();
+    // no return on its own: the white holds with the words on it until replay is pressed
+    if (wash > WASH_S + 0.6 || el > FLIGHT_S + 0.8) replay.classList.add('show');
   } else if (!reduceMotion) {
     // lying still: a breath of drift
     lookNow.x = Math.sin(t * 0.23) * 0.05;
@@ -940,6 +1037,10 @@ function frame() {
   target.copy(camera.position).add(dirV);
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
+  if (Math.abs(camera.zoom - zoomGoal) > 0.0005) {
+    camera.zoom = Math.exp(Math.log(camera.zoom) + (Math.log(zoomGoal) - Math.log(camera.zoom)) * (reduceMotion ? 1 : 0.12));
+    camera.updateProjectionMatrix();
+  }
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
