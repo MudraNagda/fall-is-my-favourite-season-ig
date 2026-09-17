@@ -915,37 +915,92 @@ addEventListener('keydown', (e) => {
 });
 
 // ---- music ------------------------------------------------------------------
-// Browsers only allow sound after a user gesture, so music starts on the first
-// click or key press and then never stops: it loops through every flight.
-// To use your own track, put the file next to this page and set MUSIC_FILE to
-// its name (for example 'music.mp3'); it is looped instead. Left empty, a quiet
-// generated piece plays: a slow D-minor pad with sparse plucked notes and a
-// long echo. Press M to mute.
-const MUSIC_FILE = '';
-let music = null;
+// The soundtrack is a YouTube video, played through YouTube's own embedded
+// player (nothing is downloaded or re-hosted). The player is set up quietly at
+// load; browsers only allow sound after a user gesture, so it starts on the
+// first click or key press, fades in slowly, and loops through every flight.
+// If the player cannot load (for example inside a sandbox that blocks YouTube),
+// the quiet generated piece below plays instead. Press M to mute.
+const MUSIC_VIDEO = 'UZ9uyQI3pF0';
+const MUSIC_VOLUME = 55;   // 0..100, where the fade ends
+const MUSIC_FADE_S = 12;   // seconds the fade-in takes
+let music = null;          // set once sound has been started
+let yt = null, ytReady = false, ytFailed = false;
+
+(function prepareYouTube() {
+  const holder = document.createElement('div');
+  holder.id = 'yt';
+  // kept out of sight: the page is about the wood, the video is only its sound
+  holder.style.cssText = 'position:fixed;left:-400px;bottom:0;width:320px;height:180px;opacity:0;pointer-events:none;';
+  holder.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(holder);
+  const inner = document.createElement('div');
+  inner.id = 'yt-player';
+  holder.appendChild(inner);
+  window.onYouTubeIframeAPIReady = () => {
+    yt = new YT.Player('yt-player', {
+      width: 320, height: 180, videoId: MUSIC_VIDEO,
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, loop: 1, playlist: MUSIC_VIDEO, playsinline: 1, rel: 0 },
+      events: {
+        onReady: () => { ytReady = true; yt.setVolume(0); if (music && music.wantYT) playYouTube(); },
+        onError: () => { ytFailed = true; if (music && music.wantYT) fallBack(); },
+        // belt and braces for the loop: start over if it ever ends
+        onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) { yt.seekTo(0); yt.playVideo(); } },
+      },
+    });
+  };
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = () => { ytFailed = true; if (music && music.wantYT) fallBack(); };
+  document.head.appendChild(tag);
+})();
+
+// for checking from the console: __music() reports what the soundtrack is doing
+window.__music = () => ({ ytReady, ytFailed, started: !!music, usingYouTube: !!(music && music.yt), usingGenerated: !!(music && music.master),
+  state: ytReady ? yt.getPlayerState() : null, volume: ytReady ? yt.getVolume() : null, muted: ytReady ? yt.isMuted() : null });
+
+function playYouTube() {
+  music.wantYT = false;
+  music.yt = true;
+  yt.unMute();
+  yt.setVolume(0);
+  yt.playVideo();
+  // slow fade-in, eased so it creeps in at first
+  const t0 = performance.now();
+  clearInterval(music.fade);
+  music.fade = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / (MUSIC_FADE_S * 1000));
+    if (!music.muted) yt.setVolume(Math.round(MUSIC_VOLUME * k * k));
+    if (k >= 1) clearInterval(music.fade);
+  }, 120);
+}
+function fallBack() {
+  music.wantYT = false;
+  if (music.ctx && !music.master) generated(music.ctx);
+}
 function startMusic() {
   if (music) return;
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ctx = AC ? new AC() : null; // created inside the gesture so it is allowed to run
-  music = { ctx, el: null, master: null, muted: false };
-  if (!MUSIC_FILE) { if (ctx) generated(ctx); return; }
-  const el = new Audio(MUSIC_FILE);
-  el.loop = true;
-  el.volume = 0.6;
-  el.play().then(() => { music.el = el; if (ctx) ctx.close(); music.ctx = null; })
-    .catch(() => { if (ctx) generated(ctx); }); // file missing or blocked: fall back
+  // created inside the gesture so the fallback is allowed to run if it is needed
+  music = { ctx: AC ? new AC() : null, master: null, muted: false, yt: false, wantYT: true, fade: 0 };
+  if (ytFailed) fallBack();
+  else if (ytReady) playYouTube();
+  // otherwise the player is still loading: onReady or onError picks it up.
+  // If nothing answers in a few seconds, stop waiting and use the generated piece.
+  setTimeout(() => { if (music.wantYT) fallBack(); }, 6000);
 }
 function toggleMute() {
   if (!music) return;
   music.muted = !music.muted;
-  if (music.el) music.el.muted = music.muted;
+  if (music.yt) { if (music.muted) yt.mute(); else yt.unMute(); }
   if (music.master) music.master.gain.setTargetAtTime(music.muted ? 0 : 0.5, music.ctx.currentTime, 0.2);
 }
 function generated(ctx) {
   ctx.resume();
   const master = ctx.createGain();
   master.gain.value = 0;
-  master.gain.setTargetAtTime(0.5, ctx.currentTime, 1.5);
+  master.gain.setTargetAtTime(music.muted ? 0 : 0.5, ctx.currentTime, 4); // slow fade-in here too
   const comp = ctx.createDynamicsCompressor();
   master.connect(comp).connect(ctx.destination);
   music.master = master;
