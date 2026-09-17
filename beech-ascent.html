@@ -36,7 +36,7 @@
   }
   /* painterly finish: paper grain + a warm vignette pulling the corners in,
      the way the photo's edges fall into shadowed foliage */
-  .grain, .wash, .leak, .vignette, .flash {
+  .grain, .wash, .leak, .vignette {
     position: fixed;
     inset: 0;
     pointer-events: none;
@@ -72,13 +72,6 @@
     transition: opacity 1.4s ease;
   }
   .vignette.lift { opacity: 0; }
-  /* the white-out at the top of the flight, then the return to the ground */
-  .flash {
-    background: #fbfaf4;
-    opacity: 0;
-    transition: opacity 0.9s ease;
-  }
-  .flash.on { opacity: 1; }
   /* one line of guidance in the centre of the sky */
   .msg {
     position: fixed;
@@ -96,6 +89,27 @@
     transition: opacity 0.5s ease;
   }
   .msg.show { opacity: 1; }
+  /* plain text button on the bottom edge, shown once the flight is over */
+  .replay {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 18px 24px;
+    border: 0;
+    background: none;
+    font: 600 12px/1 'Inter', system-ui, -apple-system, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    color: rgba(0, 0, 0, 0.75);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+  .replay.show { opacity: 1; pointer-events: auto; }
+  .replay:focus-visible { outline: 1px solid currentColor; outline-offset: -8px; }
 
 </style>
 </head>
@@ -105,8 +119,8 @@
 <div class="wash"></div>
 <div class="leak"></div>
 <div class="vignette"></div>
-<div class="flash" id="flash"></div>
 <p class="msg" id="msg"></p>
+<button class="replay" id="replay" type="button">replay</button>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -163,7 +177,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(FOG, 34, 150);
+scene.fog = new THREE.Fog(FOG, 80, 420);
 
 const camera = new THREE.PerspectiveCamera(96, 1, 0.05, 600);
 const GROUND_Y = 10; // start about a quarter of the way up the trunks
@@ -377,14 +391,35 @@ const Z = new THREE.Vector3(0, 0, 1), Y = new THREE.Vector3(0, 1, 0);
 const familyColors = {};
 for (const [k, [a, b]] of Object.entries(FAMILIES)) familyColors[k] = [new THREE.Color(a), new THREE.Color(b)];
 
+// The opening view's window of sky is heart-shaped: the canopy is cleared
+// wherever a leaf's direction from the viewer's eye falls inside a heart drawn
+// on the sky. Unit heart curve, then the polygon test in tangent space.
+const unitHeart = Array.from({ length: 160 }, (_, i) => {
+  const t = (i / 160) * Math.PI * 2;
+  return [Math.pow(Math.sin(t), 3), (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t) + 2.5) / 14.5];
+});
+const WINDOW = 0.4; // half-size of the heart in tangent units (~22 degrees)
+const EYE_Y = 10;   // where the viewer's eye sits at rest (GROUND_Y)
+function inSkyHeart(p) {
+  const dy = p.y - EYE_Y;
+  if (dy <= 0.5) return false;
+  const u = p.x / dy / WINDOW, v = -p.z / dy / WINDOW; // screen-up is -z at rest
+  let inside = false;
+  for (let i = 0, j = unitHeart.length - 1; i < unitHeart.length; j = i++) {
+    const [xi, yi] = unitHeart[i], [xj, yj] = unitHeart[j];
+    if ((yi > v) !== (yj > v) && u < ((xj - xi) * (v - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 function addDab(p, family, scale) {
-  // keep a window of sky open straight overhead. Most leaves inside that cone
-  // are "flight-only": scaled to nothing while the viewer lies on the ground,
-  // grown in once the camera lifts, so the ascent still pushes through foliage.
+  // keep the heart of sky open overhead. Leaves inside it are "flight-only":
+  // scaled to nothing while the viewer rests, grown in once the camera lifts,
+  // so the ascent still pushes through foliage.
   let flightOnly = 0;
-  if (Math.hypot(p.x, p.z) < p.y * 0.2) {
+  if (inSkyHeart(p)) {
     if (p.y < 18) return;
-    if (p.y < 22 || rnd() < 0.75) flightOnly = 1;
+    flightOnly = 1;
   }
   // face mostly downward/upward (seen from below), random tilt and spin
   const tilt = rnd() < 0.65 ? rr(0, 0.7) : rr(0.7, 1.5);
@@ -528,6 +563,15 @@ function spruce(tree) {
   return tb.build();
 }
 
+// ---- ground: a pale dusty floor under the wood, seen only from above --------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(3000, 3000),
+  new THREE.MeshBasicMaterial({ color: new THREE.Color('#7a6e4e'), fog: true }),
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.6;
+scene.add(ground);
+
 // ---- the wood -------------------------------------------------------------
 const LOD = {
   near: { maxDepth: 4, leafDepth: 2, leafStep: 0.4, dabsPerCluster: 4, spread: 0.6, dabScale: 0.9, branches: 11 },
@@ -552,8 +596,51 @@ function ring(count, r0, r1, lod, families, hMin, hMax) {
 // the dominant near trunk that runs up the middle of the frame
 trees.push({ x: 0.9, z: 2.4, height: 34, baseR: 0.34, lean: { x: 0.06, z: 0.16 }, family: 'amber', lod: LOD.near, kind: 'beech' });
 ring(6, 2.8, 6.5, LOD.near, ['gold', 'amber', 'flame', 'olive', 'ember', 'lime'], 26, 36);
-ring(9, 7, 14, LOD.mid, ['amber', 'gold', 'flame', 'olive', 'ember', 'gold', 'lime'], 24, 34);
-ring(16, 15, 30, LOD.far, ['amber', 'flame', 'gold', 'olive', 'ember'], 22, 32);
+ring(9, 7, 12, LOD.mid, ['amber', 'gold', 'flame', 'olive', 'ember', 'gold', 'lime'], 24, 34);
+
+// The rest of the wood fills a heart, seen once the camera turns to look back
+// down. Classic heart curve, scaled to ~60 units across and shifted so the
+// viewer's spot sits low in the middle of it; the notch points to +z, which is
+// screen-up when the camera looks down at the end of the flight.
+const HEART_S = 2.3, HEART_DZ = 3;
+const heartPt = (t) => [
+  16 * Math.pow(Math.sin(t), 3) * HEART_S,
+  (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t) + HEART_DZ) * HEART_S,
+];
+const heartPoly = Array.from({ length: 240 }, (_, i) => heartPt((i / 240) * Math.PI * 2));
+function inHeart(x, z) {
+  let inside = false;
+  for (let i = 0, j = heartPoly.length - 1; i < heartPoly.length; j = i++) {
+    const [xi, zi] = heartPoly[i], [xj, zj] = heartPoly[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+const FAR_FAMILIES = ['amber', 'flame', 'gold', 'olive', 'ember', 'gold'];
+const placed = [];
+function farTree(x, z) {
+  for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 4.6) return false;
+  placed.push([x, z]);
+  const out = rr(0.03, 0.1);
+  const a = Math.atan2(z, x);
+  trees.push({
+    x, z, height: rr(22, 32), baseR: rr(0.18, 0.3),
+    lean: { x: Math.cos(a) * out + rr(-0.04, 0.04), z: Math.sin(a) * out + rr(-0.04, 0.04) },
+    family: pick(FAR_FAMILIES), lod: LOD.far, kind: 'beech',
+  });
+  return true;
+}
+// the outline first, pulled a touch inward so crowns draw the edge
+for (let i = 0; i < 60; i++) {
+  const [hx, hz] = heartPt(((i + rr(0.2, 0.8)) / 60) * Math.PI * 2);
+  farTree(hx * 0.95, hz * 0.95);
+}
+// then a loose fill inside, clear of the near rings
+for (let tries = 0, n = 0; tries < 6000 && n < 85; tries++) {
+  const x = rr(-38, 38), z = rr(-34, 36);
+  if (Math.hypot(x, z) < 13.5 || !inHeart(x, z)) continue;
+  if (farTree(x, z)) n++;
+}
 // one spruce at the frame's edge, like the photo's bottom-right corner
 trees.push({ x: 12.5, z: 11, height: 24, baseR: 0.26, lod: { dabsPerCluster: 3, dabScale: 0.9 }, kind: 'spruce' });
 
@@ -594,8 +681,8 @@ const leafMat = new THREE.ShaderMaterial({
     uMap: { value: dabAtlas() },
     uTime: { value: 0 },
     uWind: { value: reduceMotion ? 0 : 1 },
-    uFogColor: { value: FOG },
-    uFogRange: { value: new THREE.Vector2(34, 150) },
+    uFogColor: { value: scene.fog.color },
+    uFogRange: { value: new THREE.Vector2(80, 420) },
     uSun: { value: SUN_DIR },
   },
   vertexShader: `
@@ -696,7 +783,6 @@ const puffs = [];
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // ---- camera + flight -------------------------------------------------------
-const flash = document.getElementById('flash');
 const vignette = document.querySelector('.vignette');
 const msg = document.getElementById('msg');
 let skyStart = null; // moment the camera clears the treetops
@@ -708,14 +794,17 @@ function say(html) {
 // white over blue sky, darkening to black as the sky washes out
 function inkFor(white) {
   const c = Math.round(255 * (1 - white));
-  msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
+  msg.style.color = replay.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
 }
 say('click to soar');
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
 const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
 const SKY_AT = 31; // ~90% of tree height: the second line of text appears here
-const RISE = 150;
+const RISE = 100;
+const replay = document.getElementById('replay');
+const CREAM = new THREE.Color('#fbfaf4');
+let done = false;
 
 // slow lift off the ground, then the shot up through the crown
 const ease = (t) => Math.pow(t, 2.4);
@@ -727,19 +816,21 @@ function launch() {
 }
 function land() {
   flight = null;
+  done = false;
   skyStart = null;
   inkFor(0);
   say('click to soar');
+  replay.classList.remove('show');
   for (const { sp, base } of puffs) sp.material.opacity = base;
   camera.position.set(0, GROUND_Y, 0);
-  camera.fov = 96;
+  camera.fov = innerWidth > innerHeight ? 96 : 108;
   camera.updateProjectionMatrix();
   sky.material.uniforms.uLift.value = 0;
-  requestAnimationFrame(() => {
-    flash.classList.remove('on');
-    vignette.classList.remove('lift');
-  });
+  scene.fog.color.copy(FOG);
+  vignette.classList.remove('lift');
 }
+replay.addEventListener('pointerdown', (e) => e.stopPropagation());
+replay.addEventListener('click', (e) => { e.stopPropagation(); land(); });
 
 addEventListener('pointerdown', (e) => { if (e.button === 0) launch(); });
 addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
@@ -801,17 +892,24 @@ function frame() {
   leafMat.uniforms.uTime.value = t;
   if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
 
-  let roll = 0;
+  let roll = 0, theta = 0, turn = 0;
   if (flight) {
     const el = t - flight.start;
     const u = Math.min(1, el / FLIGHT_S);
     const e = ease(u);
-    camera.position.y = GROUND_Y + RISE * e;
-    roll = reduceMotion ? 0 : u * u * 0.5;             // slow spiral as it climbs
+    // the shot up, then a slow drift on upward so the wood keeps shrinking
+    camera.position.y = GROUND_Y + RISE * e + Math.min(1.5, Math.max(0, el - FLIGHT_S)) * 8;
+    // once above the crowns, pitch backwards over the head to look down
+    turn = sstep(0.6, 0.88, u);
+    theta = Math.PI * turn;
+    roll = reduceMotion ? 0 : u * u * 0.5 * (1 - sstep(0.55, 0.66, u)); // spiral fades before the turn
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
-    sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
+    // sky and haze: blue, a touch of yellow, then almost white
+    const lift = Math.max(0, (u - 0.78) / 0.22);
+    sky.material.uniforms.uLift.value = lift;
+    scene.fog.color.copy(FOG).lerp(SUN_GLOW, sstep(0, 0.55, lift)).lerp(CREAM, 0.6 * sstep(0.35, 1, lift));
     inkFor(sstep(0.8, 0.97, u));
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
@@ -821,19 +919,19 @@ function frame() {
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
-    if (u > 0.86) flash.classList.add('on');
-    if (u >= 1 && el > FLIGHT_S + 0.8) land();
+    if (u >= 1 && !done) { done = true; replay.classList.add('show'); }
   } else if (!reduceMotion) {
     // lying still: a breath of drift
     lookNow.x = Math.sin(t * 0.23) * 0.05;
     lookNow.y = Math.cos(t * 0.19) * 0.04;
   }
 
-  const idle = flight ? 0.35 : 1;
-  dirV.set(lookNow.x * 0.14 * idle, 1, lookNow.y * 0.14 * idle).normalize();
+  const idle = flight ? 0.35 * (1 - turn) : 1;
+  dirV.set(lookNow.x * 0.14 * idle, Math.cos(theta), -Math.sin(theta) + lookNow.y * 0.14 * idle).normalize();
   target.copy(camera.position).add(dirV);
-  camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
+  camera.up.set(0, -Math.sin(theta), -Math.cos(theta));
   camera.lookAt(target);
+  camera.rotateZ(roll);
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
