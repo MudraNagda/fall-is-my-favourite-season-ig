@@ -35,6 +35,19 @@
     /* faded-print look: a little less saturation and contrast, a warm cast */
     filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03);
   }
+  /* one loose leaf that crosses the frame when the camera reaches the treetops */
+  .leaf {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 56px;
+    height: 56px;
+    margin: -28px 0 0 -28px;
+    pointer-events: none;
+    visibility: hidden;
+    will-change: transform;
+    filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03) drop-shadow(0 2px 3px rgba(40, 20, 0, 0.18));
+  }
   /* painterly finish: paper grain + a warm vignette pulling the corners in,
      the way the photo's edges fall into shadowed foliage */
   .grain, .wash, .leak, .vignette, .flash {
@@ -126,7 +139,7 @@
     display: flex;
     align-items: stretch;
     gap: 8px;
-    height: 132px;
+    height: 150px;
     color: var(--ui);
     font: 600 10px/1 'Inter', system-ui, -apple-system, sans-serif;
     font-variant-numeric: tabular-nums;
@@ -178,6 +191,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<canvas class="leaf" id="leaf" width="128" height="128"></canvas>
 <canvas class="grain" id="grain"></canvas>
 <div class="wash"></div>
 <div class="leak"></div>
@@ -186,8 +200,8 @@
 <p class="msg" id="msg"></p>
 <button class="replay" id="replay" type="button">replay</button>
 <label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
-  <ol aria-hidden="true"><li>120</li><li>100</li><li>10</li><li>5</li><li>0</li></ol>
-  <input id="zoomRange" type="range" min="0" max="4" step="1" value="0" aria-valuetext="0%">
+  <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
+  <input id="zoomRange" type="range" min="0" max="5" step="1" value="0" aria-valuetext="0%">
 </label>
 
 <script type="module">
@@ -801,7 +815,7 @@ function inkFor(white) {
 
 // camera height slider: 0% is where the scene starts, 100% is the top of the
 // trees. Snapped stops, eased between while the viewer is at rest.
-const STOPS = [0, 0.05, 0.1, 1, 1.2];
+const STOPS = [0, 0.25, 0.5, 0.75, 1, 1.25];
 const zoomBox = document.getElementById('zoom');
 const zoomRange = document.getElementById('zoomRange');
 let heightPct = 0;
@@ -961,6 +975,80 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+// ---- the loose leaf -----------------------------------------------------------
+// Painted once on a small canvas, then flown in screen space: from the middle
+// of the bottom edge toward the middle of the right edge, and halfway there the
+// push gives out and it sinks in a soft zigzag.
+const leafEl = document.getElementById('leaf');
+(function paintLeaf() {
+  const c = leafEl.getContext('2d');
+  c.translate(64, 64);
+  const body = () => {
+    c.beginPath();
+    c.moveTo(0, -56);                                  // pointed tip
+    c.bezierCurveTo(30, -34, 38, 6, 16, 40);
+    c.quadraticCurveTo(8, 50, 0, 50);                  // rounded base
+    c.quadraticCurveTo(-8, 50, -16, 40);
+    c.bezierCurveTo(-38, 6, -30, -34, 0, -56);
+    c.closePath();
+  };
+  const g = c.createLinearGradient(-30, -50, 30, 50);
+  g.addColorStop(0, '#F5BB00');
+  g.addColorStop(0.55, '#EC9F05');
+  g.addColorStop(1, '#BF3100');
+  body(); c.fillStyle = g; c.fill();
+  c.save(); body(); c.clip();
+  c.strokeStyle = 'rgba(120, 50, 0, 0.45)'; c.lineWidth = 1.4; c.lineCap = 'round';
+  for (let i = 0; i < 7; i++) {                        // side veins off the midrib
+    const y = -40 + i * 12;
+    for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(0, y + 6); c.quadraticCurveTo(sx * 14, y, sx * 34, y - 10); c.stroke(); }
+  }
+  c.restore();
+  c.strokeStyle = 'rgba(110, 45, 0, 0.7)'; c.lineWidth = 2.2;
+  c.beginPath(); c.moveTo(0, -54); c.lineTo(0, 62); c.stroke(); // midrib and stalk
+  body(); c.strokeStyle = 'rgba(140, 60, 0, 0.55)'; c.lineWidth = 1.6; c.stroke();
+})();
+let looseLeaf = null, lastT = 0;
+function releaseLeaf() {
+  if (looseLeaf) return;
+  const W = innerWidth, H = innerHeight;
+  const from = { x: W / 2, y: H + 40 }, to = { x: W + 40, y: H / 2 };
+  const T = 4.2; // seconds the full bottom-to-right crossing would take
+  looseLeaf = {
+    x: from.x, y: from.y, from, to,
+    vx: (to.x - from.x) / T, vy: (to.y - from.y) / T,
+    push: { x: (to.x - from.x) / T, y: (to.y - from.y) / T },
+    fallAt: null, spin: Math.random() * 6,
+  };
+  leafEl.style.visibility = 'visible';
+}
+function flyLeaf(t, dt) {
+  const L = looseLeaf;
+  if (!L) return;
+  const total = Math.hypot(L.to.x - L.from.x, L.to.y - L.from.y);
+  const gone = Math.hypot(L.x - L.from.x, L.y - L.from.y);
+  // the push starts to give out a little before halfway, so the turn lands on the midpoint
+  if (L.fallAt === null && gone > total * 0.4) L.fallAt = t;
+  let wantX = L.push.x, wantY = L.push.y, ease = 0.08;
+  if (L.fallAt !== null) {
+    const f = t - L.fallAt;
+    // the push dies away; a slow sink with a side-to-side sway takes over
+    wantX = Math.sin(f * 2.4) * 130;
+    wantY = Math.min(62, 12 + f * 8);
+    ease = 0.05;
+  }
+  L.vx += (wantX - L.vx) * ease;
+  L.vy += (wantY - L.vy) * ease;
+  L.x += L.vx * dt;
+  L.y += L.vy * dt;
+  // lean into the direction of travel and flutter a little
+  const lean = Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * 2.3 + L.spin) * 0.18;
+  const flutter = 0.72 + 0.28 * Math.cos(t * 3.1 + L.spin);
+  const roll = L.fallAt === null ? t * 1.4 + L.spin : lean + (L.fallAt * 1.4 + L.spin) * Math.exp(-(t - L.fallAt) * 0.9);
+  leafEl.style.transform = `translate(${L.x.toFixed(1)}px, ${L.y.toFixed(1)}px) rotate(${roll.toFixed(3)}rad) scaleX(${flutter.toFixed(3)})`;
+  if (L.y > innerHeight + 60 || L.x > innerWidth + 80) { looseLeaf = null; leafEl.style.visibility = 'hidden'; }
+}
+
 // ---- film grain -------------------------------------------------------------
 // A handful of pre-baked noise tiles, one stamped across a device-pixel
 // canvas at a random offset every other frame, so the grain crawls the way
@@ -1004,6 +1092,8 @@ const clock = new THREE.Clock();
 const dirV = new THREE.Vector3(), target = new THREE.Vector3();
 function frame() {
   const t = clock.getElapsedTime();
+  const dt = Math.min(0.05, t - lastT); lastT = t;
+  const yBefore = camera.position.y;
   leafMat.uniforms.uTime.value = t;
   if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
 
@@ -1049,6 +1139,10 @@ function frame() {
   target.copy(camera.position).add(dirV);
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
+  // entering 100%: the camera has just risen through the treetops
+  const topY = heightFor(1) - 0.5; // a touch early, since the slider eases in and never quite lands
+  if (yBefore < topY && camera.position.y >= topY) releaseLeaf();
+  flyLeaf(t, dt);
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
