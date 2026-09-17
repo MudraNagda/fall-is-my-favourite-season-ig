@@ -1111,7 +1111,10 @@ function spawnLeaf(t, hero) {
     size: hero ? 56 : 30 + Math.random() * 40,
     sprite: hero ? SPRITES[0] : SPRITES[Math.floor(Math.random() * SPRITES.length)],
     spin: Math.random() * 6.3,
-    tilt: (Math.random() - 0.5) * 1.2, // the angle it hangs at; it never spins
+    tilt: Math.random() * Math.PI * 2,                                   // every leaf faces its own way
+    drift: (Math.random() < 0.5 ? -1 : 1) * (0.08 + Math.random() * 0.22), // a slow turn, never a spin
+    rock: 0.12 + Math.random() * 0.14, rockHz: 1.6 + Math.random() * 1.2, // how it rocks as it sways
+    turn: 0.1 + Math.random() * 0.16, turnHz: 0.7 + Math.random() * 0.8,  // a slight, slow turn in depth
     born: t,
   });
 }
@@ -1141,12 +1144,17 @@ function flyLeaves(t, dt, aboveTrees) {
     L.x += L.vx * dt;
     L.y += L.vy * dt;
     if (L.y > innerHeight + 70 || L.x < -120 || L.x > innerWidth + 120) { looseLeaves.splice(i, 1); continue; }
-    // no spinning or flipping: the leaf keeps its own hang angle and only leans
-    // gently into the direction it is drifting, with a slow rock on top
-    const roll = L.tilt + Math.atan2(L.vx, 260) * 0.8 + Math.sin(t * 0.9 + L.spin) * 0.08;
+    // each leaf has its own facing and turns only slowly; once it is sinking it
+    // leans into every swing and rocks, as before. No spinning about itself.
+    const age = t - L.born;
+    const sinking = L.fallAt === null ? 0 : Math.min(1, (t - L.fallAt) / 1.5);
+    const lean = (Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * L.rockHz + L.spin) * L.rock) * sinking;
+    const roll = L.tilt + L.drift * age + lean;
+    const turn = 1 - L.turn * (0.5 + 0.5 * Math.cos(t * L.turnHz + L.spin));
     lctx.save();
     lctx.translate(L.x, L.y);
     lctx.rotate(roll);
+    lctx.scale(turn, 1);
     lctx.globalAlpha = Math.min(1, (t - L.born) * 2);
     lctx.drawImage(L.sprite, -L.size / 2, -L.size / 2, L.size, L.size);
     lctx.restore();
