@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beech Ascent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,300;1,400&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+  /* One committed visual world: an autumn beech wood seen from the ground.
+     No light/dark split; every colour is painted explicitly. */
+  :root {
+    --sky: #0466C8;
+    --ink: #2a1d14;
+    --paper: #f6ecd9;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--sky);
+    color: var(--paper);
+    overflow: hidden;
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* faded-print look: a little less saturation and contrast, a warm cast */
+    filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03);
+  }
+  /* painterly finish: paper grain + a warm vignette pulling the corners in,
+     the way the photo's edges fall into shadowed foliage */
+  .grain, .wash, .leak, .vignette, .flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+  }
+  /* live film grain: a noise canvas redrawn ~24 times a second */
+  .grain {
+    width: 100%;
+    height: 100%;
+    opacity: 0.3;
+    mix-blend-mode: overlay;
+  }
+  /* lifted blacks and a faded amber cast, like an old colour print */
+  .wash {
+    background: linear-gradient(180deg, rgba(255, 214, 150, 0.16), rgba(255, 190, 120, 0.1));
+    mix-blend-mode: screen;
+  }
+  /* a slow light leak drifting in from one corner */
+  .leak {
+    background: radial-gradient(ellipse 60% 50% at 88% 10%, rgba(255, 150, 60, 0.42) 0%, rgba(255, 120, 50, 0.12) 40%, rgba(255, 100, 40, 0) 70%);
+    mix-blend-mode: screen;
+    opacity: 0.55;
+    animation: leak 14s ease-in-out infinite alternate;
+  }
+  @keyframes leak {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.35; }
+    100% { transform: translate(-6%, 8%) scale(1.15); opacity: 0.7; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .leak { animation: none; }
+  }
+  .vignette {
+    background: radial-gradient(ellipse 78% 72% at 50% 50%, rgba(60, 30, 10, 0) 55%, rgba(60, 30, 10, 0.42) 100%);
+    transition: opacity 1.4s ease;
+  }
+  .vignette.lift { opacity: 0; }
+  /* the white-out at the top of the flight, then the return to the ground */
+  .flash {
+    background: #d6e6f7;
+    opacity: 0;
+    transition: opacity 0.9s ease;
+  }
+  .flash.on { opacity: 1; }
+
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<canvas class="grain" id="grain"></canvas>
+<div class="wash"></div>
+<div class="leak"></div>
+<div class="vignette"></div>
+<div class="flash" id="flash"></div>
+
+<script type="module">
+import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
+
+// ---------------------------------------------------------------------------
+// A beech wood in October, seen lying on the ground: pale trunks converge on
+// the zenith through a wide lens, the crowns are painted as dabs of
+// yellow-green, amber and flame, and two dark spruces crowd the edge of the
+// frame. A click fires the viewer straight up the trunk line, through the
+// canopy, into open blue.
+// ---------------------------------------------------------------------------
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// deterministic rng so the wood is the same wood on every visit
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry(20261012);
+const rr = (a, b) => a + rnd() * (b - a);
+const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+
+// ---- palette (sRGB, converted to linear by THREE.Color) --------------------
+const SKY_ZENITH = new THREE.Color('#0466C8');
+const SKY_HORIZON = new THREE.Color('#0466C8');
+const SUN_GLOW = new THREE.Color('#fff1d6');
+const FOG = new THREE.Color('#0466C8');
+const SUN_DIR = new THREE.Vector3(-0.62, 0.66, -0.42).normalize();
+
+// leaf families: A and B are the two hues each dab blends between
+const FAMILIES = {
+  // the brief's four swatches only: 8EA604 / F5BB00 / EC9F05 / BF3100
+  gold:  ['#F5BB00', '#EC9F05'],
+  amber: ['#EC9F05', '#F5BB00'],
+  flame: ['#EC9F05', '#BF3100'],
+  ember: ['#BF3100', '#EC9F05'],
+  olive: ['#8EA604', '#F5BB00'],
+  lime:  ['#8EA604', '#8EA604'],
+  spruce: ['#8EA604', '#8EA604'],
+};
+
+// ---- renderer / scene ------------------------------------------------------
+const canvas = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(FOG, 34, 150);
+
+const camera = new THREE.PerspectiveCamera(96, 1, 0.05, 600);
+const GROUND_Y = 1.4;
+camera.position.set(0, GROUND_Y, 0);
+
+// light: a low warm sun off to the upper left, cool sky fill, warm bounce
+scene.add(new THREE.HemisphereLight(new THREE.Color('#a9c9ec'), new THREE.Color('#8a6a4a'), 1.7));
+const sun = new THREE.DirectionalLight(new THREE.Color('#ffe6c8'), 2.2);
+sun.position.copy(SUN_DIR).multiplyScalar(100);
+scene.add(sun);
+
+// ---- sky dome --------------------------------------------------------------
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(500, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uZenith: { value: SKY_ZENITH },
+      uHorizon: { value: SKY_HORIZON },
+      uGlow: { value: SUN_GLOW },
+      uSun: { value: SUN_DIR },
+      uLift: { value: 0 }, // brightens as the viewer leaves the trees
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uZenith, uHorizon, uGlow, uSun; uniform float uLift;
+      varying vec3 vDir;
+      void main() {
+        float h = clamp(vDir.y, 0.0, 1.0);
+        vec3 col = mix(uHorizon, uZenith, pow(h, 0.65));
+        col = mix(col, uGlow, uLift * 0.85);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  }),
+);
+scene.add(sky);
+
+// ---- bark texture: dark brown, mottled, a little lichen ---------------------
+function barkTexture() {
+  const W = 256, H = 1024;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#7d5d45';
+  ctx.fillRect(0, 0, W, H);
+  const r = mulberry(77);
+  const blot = (color, n, rx, ry, alpha) => {
+    ctx.fillStyle = color;
+    for (let i = 0; i < n; i++) {
+      ctx.globalAlpha = alpha * (0.5 + r());
+      ctx.beginPath();
+      ctx.ellipse(r() * W, r() * H, rx * (0.4 + r()), ry * (0.4 + r()), r() * 6.3, 0, 6.3);
+      ctx.fill();
+    }
+  };
+  blot('#9c7b5e', 200, 30, 48, 0.26);   // warmer patches
+  blot('#4a372a', 180, 24, 40, 0.2);    // deep shadows
+  blot('#5e5a3a', 70, 16, 22, 0.14);    // lichen
+  blot('#241a12', 220, 10, 2, 0.18);    // lenticel scratches, horizontal
+  blot('#3a2b1f', 40, 3, 90, 0.14);     // faint vertical seams
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return tex;
+}
+
+// ---- leaf dab atlas ----------------------------------------------------------
+// 2x2 atlas of painterly "dabs": each cell is 3-5 overlapping leaf shapes.
+// R channel = which of the two family hues this leaf takes, G = luminance
+// shading, A = coverage with a softened, slightly ragged edge.
+function dabAtlas() {
+  const S = 512, CELL = 256;
+  const c = document.createElement('canvas');
+  c.width = S; c.height = S;
+  const ctx = c.getContext('2d');
+  const r = mulberry(4242);
+  const leaf = (cx, cy, ang, len, wid, hue, lum) => {
+    // pointed ellipse with a jittered outline
+    const pts = [];
+    const n = 22;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const ex = Math.cos(a) * len;
+      const ey = Math.sin(a) * wid * (0.75 + 0.25 * Math.abs(Math.cos(a)));
+      const j = 1 + (r() - 0.5) * 0.16;
+      pts.push([
+        cx + (ex * Math.cos(ang) - ey * Math.sin(ang)) * j,
+        cy + (ex * Math.sin(ang) + ey * Math.cos(ang)) * j,
+      ]);
+    }
+    const g = ctx.createLinearGradient(
+      cx - Math.cos(ang) * len, cy - Math.sin(ang) * len,
+      cx + Math.cos(ang) * len, cy + Math.sin(ang) * len,
+    );
+    const hueByte = Math.round(hue * 255);
+    g.addColorStop(0, `rgb(${hueByte},${Math.round(lum * 0.72 * 255)},0)`);
+    g.addColorStop(1, `rgb(${hueByte},${Math.round(lum * 255)},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let k = 1; k < n; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+    ctx.closePath();
+    ctx.fill();
+    // shadowed rim so each leaf keeps its outline where dabs overlap
+    ctx.strokeStyle = `rgb(${hueByte},${Math.round(lum * 0.42 * 255)},0)`;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  };
+  for (let cell = 0; cell < 4; cell++) {
+    const ox = (cell % 2) * CELL, oy = Math.floor(cell / 2) * CELL;
+    const count = 3 + Math.floor(r() * 3);
+    for (let i = 0; i < count; i++) {
+      leaf(
+        ox + CELL / 2 + (r() - 0.5) * 90,
+        oy + CELL / 2 + (r() - 0.5) * 90,
+        r() * Math.PI,
+        44 + r() * 30,
+        22 + r() * 14,
+        r(),
+        0.32 + r() * 0.68,
+      );
+    }
+  }
+  // soften edges a touch so the alpha cutout reads like a wet brush edge
+  const soft = document.createElement('canvas');
+  soft.width = S; soft.height = S;
+  const sctx = soft.getContext('2d');
+  sctx.filter = 'blur(1.2px)';
+  sctx.drawImage(c, 0, 0);
+  const tex = new THREE.CanvasTexture(soft);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return tex;
+}
+
+// ---- geometry builders ----------------------------------------------------
+// One merged buffer per tree for branches; one global buffer for twig lines;
+// one global instanced buffer for every leaf dab in the wood.
+class TubeBuilder {
+  constructor() { this.pos = []; this.nor = []; this.uv = []; this.idx = []; this.count = 0; }
+  // path: [{p: Vector3, r: number}], sides: ring resolution
+  addPath(path, sides) {
+    const base = this.count;
+    let N = new THREE.Vector3();
+    let arc = 0;
+    const T = new THREE.Vector3(), B = new THREE.Vector3(), tmp = new THREE.Vector3();
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i].p;
+      const next = path[Math.min(i + 1, path.length - 1)].p;
+      const prev = path[Math.max(i - 1, 0)].p;
+      T.subVectors(next, prev).normalize();
+      if (i === 0) {
+        tmp.set(1, 0, 0);
+        if (Math.abs(T.dot(tmp)) > 0.9) tmp.set(0, 0, 1);
+        N.crossVectors(T, tmp).normalize();
+      } else {
+        arc += p.distanceTo(prev);
+        // parallel-transport the frame so the tube doesn't twist
+        N.sub(tmp.copy(T).multiplyScalar(N.dot(T))).normalize();
+      }
+      B.crossVectors(T, N);
+      const rad = path[i].r;
+      for (let j = 0; j <= sides; j++) {
+        const a = (j / sides) * Math.PI * 2;
+        const nx = N.x * Math.cos(a) + B.x * Math.sin(a);
+        const ny = N.y * Math.cos(a) + B.y * Math.sin(a);
+        const nz = N.z * Math.cos(a) + B.z * Math.sin(a);
+        this.pos.push(p.x + nx * rad, p.y + ny * rad, p.z + nz * rad);
+        this.nor.push(nx, ny, nz);
+        this.uv.push(j / sides, arc / 2.4);
+      }
+    }
+    const ring = sides + 1;
+    for (let i = 0; i < path.length - 1; i++) {
+      for (let j = 0; j < sides; j++) {
+        const a = base + i * ring + j, b = a + 1, c = a + ring, d = c + 1;
+        this.idx.push(a, c, b, b, c, d);
+      }
+    }
+    this.count += path.length * ring;
+  }
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    g.setIndex(this.idx);
+    return g;
+  }
+}
+
+const twigPos = [];
+const leaves = { pos: [], quat: [], scale: [], colA: [], colB: [], misc: [] };
+const tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
+const Z = new THREE.Vector3(0, 0, 1), Y = new THREE.Vector3(0, 1, 0);
+const familyColors = {};
+for (const [k, [a, b]] of Object.entries(FAMILIES)) familyColors[k] = [new THREE.Color(a), new THREE.Color(b)];
+
+function addDab(p, family, scale) {
+  // keep a window of sky open straight overhead. Most leaves inside that cone
+  // are "flight-only": scaled to nothing while the viewer lies on the ground,
+  // grown in once the camera lifts, so the ascent still pushes through foliage.
+  let flightOnly = 0;
+  if (Math.hypot(p.x, p.z) < p.y * 0.2) {
+    if (p.y < 14) return;
+    if (p.y < 22 || rnd() < 0.75) flightOnly = 1;
+  }
+  // face mostly downward/upward (seen from below), random tilt and spin
+  const tilt = rnd() < 0.65 ? rr(0, 0.7) : rr(0.7, 1.5);
+  const az = rr(0, Math.PI * 2);
+  const normal = new THREE.Vector3(Math.sin(tilt) * Math.cos(az), Math.cos(tilt), Math.sin(tilt) * Math.sin(az));
+  tmpQ.setFromUnitVectors(Z, normal);
+  tmpQ2.setFromAxisAngle(Z, rr(0, Math.PI * 2));
+  tmpQ.multiply(tmpQ2);
+  const [a, b] = familyColors[family];
+  const jitter = rr(0.82, 1.18);
+  leaves.pos.push(p.x, p.y, p.z);
+  leaves.quat.push(tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w);
+  leaves.scale.push(scale);
+  leaves.colA.push(a.r * jitter, a.g * jitter, a.b * jitter);
+  leaves.colB.push(b.r * jitter, b.g * jitter, b.b * jitter);
+  leaves.misc.push(rr(0, Math.PI * 2), Math.floor(rnd() * 4), flightOnly, rr(0.55, 1.15));
+}
+
+// perturb a direction by a random vector, keep unit length
+const _v = new THREE.Vector3();
+function wobble(dir, amount, upBias) {
+  _v.set(rr(-1, 1), rr(-1, 1), rr(-1, 1)).multiplyScalar(amount);
+  dir.add(_v).addScaledVector(Y, upBias).normalize();
+  return dir;
+}
+function perpendicular(dir) {
+  _v.set(rr(-1, 1), rr(-1, 1), rr(-1, 1));
+  return _v.sub(dir.clone().multiplyScalar(_v.dot(dir))).normalize().clone();
+}
+
+// A crown branch: curved tube, children at the tip and along the outer half,
+// leaf dabs along everything from lod.leafDepth outward.
+function growBranch(tb, start, dir, len, r0, r1, depth, lod, family) {
+  const segs = 4;
+  const path = [{ p: start.clone(), r: r0 }];
+  const d = dir.clone();
+  let p = start.clone();
+  for (let i = 1; i <= segs; i++) {
+    wobble(d, 0.16, 0.05);
+    p = p.clone().addScaledVector(d, len / segs);
+    path.push({ p, r: r0 + (r1 - r0) * (i / segs) });
+  }
+  if (depth < lod.maxDepth) tb.addPath(path, Math.max(3, 7 - depth * 2));
+  else for (let i = 0; i < segs; i++) twigPos.push(path[i].p.x, path[i].p.y, path[i].p.z, path[i + 1].p.x, path[i + 1].p.y, path[i + 1].p.z);
+
+  if (depth >= lod.leafDepth) {
+    const step = lod.leafStep;
+    for (let s = step * 0.5; s < len; s += step) {
+      const i = Math.min(segs - 1, Math.floor((s / len) * segs));
+      const t = (s / len) * segs - i;
+      const c = path[i].p.clone().lerp(path[i + 1].p, t);
+      const n = lod.dabsPerCluster;
+      for (let k = 0; k < n; k++) {
+        const q = c.clone().add(new THREE.Vector3(rr(-1, 1), rr(-0.6, 0.6), rr(-1, 1)).multiplyScalar(lod.spread));
+        addDab(q, family, rr(0.38, 0.72) * lod.dabScale);
+      }
+    }
+  }
+  if (depth >= lod.maxDepth) return;
+  const kids = 2 + (rnd() < 0.55 ? 1 : 0);
+  for (let k = 0; k < kids; k++) {
+    const at = k === 0 ? 1 : rr(0.55, 0.95);
+    const i = Math.min(segs - 1, Math.floor(at * segs));
+    const t = at * segs - i;
+    const origin = path[i].p.clone().lerp(path[i + 1].p, t);
+    const axis = perpendicular(d);
+    const cd = d.clone().applyAxisAngle(axis, k === 0 ? rr(0.15, 0.4) : rr(0.5, 0.95));
+    cd.addScaledVector(Y, 0.25).normalize();
+    const cr0 = r0 + (r1 - r0) * at;
+    growBranch(tb, origin, cd, len * rr(0.58, 0.74), cr0 * 0.9, cr0 * 0.42, depth + 1, lod, family);
+  }
+}
+
+function beech(tree) {
+  const tb = new TubeBuilder();
+  const { x, z, height: H, baseR, lean, family, lod } = tree;
+  // trunk: near-vertical with a gentle lean and slight waver
+  const path = [];
+  const d = new THREE.Vector3(lean.x, 1, lean.z).normalize();
+  let p = new THREE.Vector3(x, -0.5, z);
+  const segs = 14;
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const r = baseR * Math.pow(1 - t, 0.85) + 0.03;
+    path.push({ p: p.clone(), r });
+    wobble(d, 0.05, 0.02);
+    p = p.clone().addScaledVector(d, H / segs);
+  }
+  tb.addPath(path, 10);
+  // crown: branches leave the trunk from ~45% up, rising and spreading
+  const crownStart = 0.42 + rnd() * 0.1;
+  const nBranches = lod.branches;
+  for (let i = 0; i < nBranches; i++) {
+    const t = crownStart + (1 - crownStart) * ((i + rnd() * 0.8) / nBranches);
+    const seg = Math.min(segs - 1, Math.floor(t * segs));
+    const origin = path[seg].p.clone().lerp(path[seg + 1].p, t * segs - seg);
+    const trunkDir = path[seg + 1].p.clone().sub(path[seg].p).normalize();
+    const axis = perpendicular(trunkDir);
+    // steeper branches near the top, spreading ones lower down
+    const ang = rr(0.55, 1.1) * (1 - (t - crownStart) * 0.5);
+    const bd = trunkDir.clone().applyAxisAngle(axis, ang);
+    bd.add(new THREE.Vector3(x, 0, z).normalize().multiplyScalar(0.45)).normalize(); // crowns open outward
+    const len = H * rr(0.2, 0.3) * (1 - (t - crownStart) * 0.35);
+    const r = path[seg].r;
+    growBranch(tb, origin, bd, len, r * 0.55, r * 0.22, 1, lod, family);
+  }
+  const g = tb.build();
+  return g;
+}
+
+// A spruce: straight trunk, whorls of drooping branches, dark dense dabs.
+function spruce(tree) {
+  const tb = new TubeBuilder();
+  const { x, z, height: H, baseR, lod } = tree;
+  const path = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    path.push({ p: new THREE.Vector3(x + rr(-0.05, 0.05), -0.5 + H * t, z + rr(-0.05, 0.05)), r: baseR * (1 - t) + 0.03 });
+  }
+  tb.addPath(path, 8);
+  for (let y = H * 0.25; y < H * 0.97; y += 0.9) {
+    const n = 4 + Math.floor(rnd() * 3);
+    const reach = (1 - y / H) * H * 0.22 + 0.4;
+    for (let k = 0; k < n; k++) {
+      const a = rr(0, Math.PI * 2);
+      const dir = new THREE.Vector3(Math.cos(a), -0.28, Math.sin(a)).normalize();
+      const start = new THREE.Vector3(x, y, z);
+      const bp = [{ p: start, r: 0.06 }];
+      let q = start.clone();
+      for (let i = 1; i <= 3; i++) {
+        q = q.clone().addScaledVector(dir, reach / 3);
+        q.y -= 0.05 * i;
+        bp.push({ p: q.clone(), r: 0.06 * (1 - i / 3) + 0.01 });
+        for (let m = 0; m < lod.dabsPerCluster; m++) {
+          addDab(q.clone().add(new THREE.Vector3(rr(-1, 1), rr(-0.7, 0.3), rr(-1, 1)).multiplyScalar(0.45)), 'spruce', rr(0.4, 0.7) * lod.dabScale);
+        }
+      }
+      tb.addPath(bp, 4);
+    }
+  }
+  return tb.build();
+}
+
+// ---- the wood -------------------------------------------------------------
+const LOD = {
+  near: { maxDepth: 4, leafDepth: 2, leafStep: 0.4, dabsPerCluster: 4, spread: 0.6, dabScale: 0.9, branches: 11 },
+  mid:  { maxDepth: 3, leafDepth: 2, leafStep: 0.5, dabsPerCluster: 4, spread: 0.7, dabScale: 1.4, branches: 10 },
+  far:  { maxDepth: 3, leafDepth: 1, leafStep: 0.8, dabsPerCluster: 3, spread: 0.9, dabScale: 2.2, branches: 8 },
+};
+const barkMat = new THREE.MeshLambertMaterial({ map: barkTexture(), color: new THREE.Color('#fbeadb') });
+const trees = [];
+function ring(count, r0, r1, lod, families, hMin, hMax) {
+  for (let i = 0; i < count; i++) {
+    const a = ((i + rr(0.1, 0.9)) / count) * Math.PI * 2;
+    const r = rr(r0, r1);
+    const out = rr(0.06, 0.16) * (lod === LOD.near ? 1.3 : 1);
+    trees.push({
+      x: Math.cos(a) * r, z: Math.sin(a) * r,
+      height: rr(hMin, hMax), baseR: rr(0.18, 0.32),
+      lean: { x: Math.cos(a) * out + rr(-0.04, 0.04), z: Math.sin(a) * out + rr(-0.04, 0.04) },
+      family: pick(families), lod, kind: 'beech',
+    });
+  }
+}
+// the dominant near trunk that runs up the middle of the frame
+trees.push({ x: 0.9, z: 2.4, height: 34, baseR: 0.34, lean: { x: 0.06, z: 0.16 }, family: 'amber', lod: LOD.near, kind: 'beech' });
+ring(6, 2.8, 6.5, LOD.near, ['gold', 'amber', 'flame', 'olive', 'ember', 'lime'], 26, 36);
+ring(9, 7, 14, LOD.mid, ['amber', 'gold', 'flame', 'olive', 'ember', 'gold', 'lime'], 24, 34);
+ring(16, 15, 30, LOD.far, ['amber', 'flame', 'gold', 'olive', 'ember'], 22, 32);
+// one spruce at the frame's edge, like the photo's bottom-right corner
+trees.push({ x: 12.5, z: 11, height: 24, baseR: 0.26, lod: { dabsPerCluster: 3, dabScale: 0.9 }, kind: 'spruce' });
+
+const wood = new THREE.Group();
+for (const t of trees) {
+  const g = t.kind === 'spruce' ? spruce(t) : beech(t);
+  const m = new THREE.Mesh(g, barkMat);
+  m.frustumCulled = false;
+  wood.add(m);
+}
+scene.add(wood);
+
+// twigs: the finest reaching lines, dark against the sky
+const twigGeo = new THREE.BufferGeometry();
+twigGeo.setAttribute('position', new THREE.Float32BufferAttribute(twigPos, 3));
+const twigs = new THREE.LineSegments(twigGeo, new THREE.LineBasicMaterial({ color: new THREE.Color('#4a3424'), fog: true }));
+twigs.frustumCulled = false;
+scene.add(twigs);
+
+// leaves: one instanced draw call for the whole canopy
+const plane = new THREE.PlaneGeometry(1, 1);
+const leafGeo = new THREE.InstancedBufferGeometry();
+leafGeo.index = plane.index;
+leafGeo.setAttribute('position', plane.attributes.position);
+leafGeo.setAttribute('uv', plane.attributes.uv);
+leafGeo.setAttribute('iPos', new THREE.InstancedBufferAttribute(new Float32Array(leaves.pos), 3));
+leafGeo.setAttribute('iQuat', new THREE.InstancedBufferAttribute(new Float32Array(leaves.quat), 4));
+leafGeo.setAttribute('iScale', new THREE.InstancedBufferAttribute(new Float32Array(leaves.scale), 1));
+leafGeo.setAttribute('iColA', new THREE.InstancedBufferAttribute(new Float32Array(leaves.colA), 3));
+leafGeo.setAttribute('iColB', new THREE.InstancedBufferAttribute(new Float32Array(leaves.colB), 3));
+leafGeo.setAttribute('iMisc', new THREE.InstancedBufferAttribute(new Float32Array(leaves.misc), 4));
+leafGeo.instanceCount = leaves.scale.length;
+console.info('beech ascent: leaf dabs', leaves.scale.length, 'twig segments', twigPos.length / 6);
+
+const leafMat = new THREE.ShaderMaterial({
+  side: THREE.DoubleSide,
+  uniforms: {
+    uMap: { value: dabAtlas() },
+    uTime: { value: 0 },
+    uWind: { value: reduceMotion ? 0 : 1 },
+    uFogColor: { value: FOG },
+    uFogRange: { value: new THREE.Vector2(34, 150) },
+    uSun: { value: SUN_DIR },
+  },
+  vertexShader: `
+    attribute vec3 iPos; attribute vec4 iQuat; attribute float iScale;
+    attribute vec3 iColA; attribute vec3 iColB; attribute vec4 iMisc;
+    uniform float uTime, uWind; uniform vec2 uFogRange; uniform vec3 uSun;
+    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
+    vec3 qrot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
+    void main() {
+      float phase = iMisc.x;
+      vUv = (uv + vec2(mod(iMisc.y, 2.0), floor(iMisc.y / 2.0))) * 0.5;
+      // flutter: each dab rocks on its stem
+      float f = (sin(uTime * 0.9 + phase) * 0.22 + sin(uTime * 0.33 + phase * 1.7) * 0.14) * uWind;
+      float show = iMisc.z > 0.5 ? smoothstep(3.0, 11.0, cameraPosition.y) : 1.0;
+      vec3 p = position * iScale * show;
+      float c = cos(f), s = sin(f);
+      p = vec3(p.x, p.y * c - p.z * s, p.y * s + p.z * c);
+      vec3 world = iPos + qrot(iQuat, p);
+      // the whole crown breathes in the wind, more so higher up
+      float sway = 0.08 + 0.16 * clamp(world.y / 30.0, 0.0, 1.0);
+      float gust = 0.7 + 0.3 * sin(uTime * 0.21 + world.x * 0.05);
+      world.xz += vec2(sin(uTime * 0.45 + phase), cos(uTime * 0.34 + phase * 0.7)) * sway * gust * uWind;
+      float dist = length(world - cameraPosition);
+      vFog = smoothstep(uFogRange.x, uFogRange.y, dist);
+      vNear = smoothstep(0.12, 0.8, dist);
+      // backlight: thin leaves against the sun glow, brighter toward the top
+      vec3 n = normalize(qrot(iQuat, vec3(0.0, 0.0, 1.0)));
+      float back = abs(dot(n, uSun));
+      vShade = (0.5 + 0.5 * clamp(world.y / 34.0, 0.0, 1.0) + 0.3 * back) * iMisc.w;
+      vColA = iColA; vColB = iColB;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
+    }`,
+  fragmentShader: `
+    uniform sampler2D uMap; uniform vec3 uFogColor;
+    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
+    void main() {
+      vec4 t = texture2D(uMap, vUv);
+      float a = t.a * vNear;
+      if (a < mix(0.42, 0.18, vFog)) discard;
+      vec3 col = mix(vColA, vColB, t.r) * (0.2 + 1.0 * t.g) * vShade;
+      col = mix(col, uFogColor, vFog * 0.85);
+      gl_FragColor = vec4(col, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+});
+const canopy = new THREE.Mesh(leafGeo, leafMat);
+canopy.frustumCulled = false;
+scene.add(canopy);
+
+// ---- camera + flight -------------------------------------------------------
+const flash = document.getElementById('flash');
+const vignette = document.querySelector('.vignette');
+const look = { x: 0, y: 0 };     // pointer parallax target
+const lookNow = { x: 0, y: 0 };
+let flight = null;               // { start: seconds }
+const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
+const RISE = 150;
+
+// slow lift off the ground, then the shot up through the crown
+const ease = (t) => Math.pow(t, 2.4);
+
+function launch() {
+  if (flight) return;
+  flight = { start: clock.getElapsedTime() };
+}
+function land() {
+  flight = null;
+  camera.position.set(0, GROUND_Y, 0);
+  camera.fov = 96;
+  camera.updateProjectionMatrix();
+  sky.material.uniforms.uLift.value = 0;
+  requestAnimationFrame(() => {
+    flash.classList.remove('on');
+    vignette.classList.remove('lift');
+  });
+}
+
+addEventListener('pointerdown', (e) => { if (e.button === 0) launch(); });
+addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
+addEventListener('pointermove', (e) => {
+  look.x = (e.clientX / innerWidth - 0.5) * 2;
+  look.y = (e.clientY / innerHeight - 0.5) * 2;
+});
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  // keep the wide-lens feel on portrait screens
+  camera.fov = w > h ? 96 : 108;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+// ---- film grain -------------------------------------------------------------
+// A handful of pre-baked noise tiles, one stamped across a device-pixel
+// canvas at a random offset every other frame, so the grain crawls the way
+// silver halide does instead of sitting still like a texture.
+const grainC = document.getElementById('grain');
+const gctx = grainC.getContext('2d');
+const TILE = 192;
+const tiles = Array.from({ length: 6 }, () => {
+  const c = document.createElement('canvas');
+  c.width = c.height = TILE;
+  const cx = c.getContext('2d');
+  const img = cx.createImageData(TILE, TILE);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    // fine, even grain: one speck per device pixel
+    const v = 128 + (Math.random() - 0.5) * 200;
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  cx.putImageData(img, 0, 0);
+  return gctx.createPattern(c, 'repeat');
+});
+function sizeGrain() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  grainC.width = Math.ceil(innerWidth * dpr);
+  grainC.height = Math.ceil(innerHeight * dpr);
+}
+let grainTick = 0;
+function drawGrain() {
+  gctx.setTransform(1, 0, 0, 1, Math.random() * TILE, Math.random() * TILE);
+  gctx.fillStyle = tiles[Math.floor(Math.random() * tiles.length)];
+  gctx.fillRect(-TILE, -TILE, grainC.width + TILE * 2, grainC.height + TILE * 2);
+  // projector flicker: tiny exposure wobble
+  grainC.style.opacity = (0.24 + Math.random() * 0.05).toFixed(3);
+}
+addEventListener('resize', () => { sizeGrain(); drawGrain(); });
+sizeGrain();
+drawGrain();
+
+const clock = new THREE.Clock();
+const dirV = new THREE.Vector3(), target = new THREE.Vector3();
+function frame() {
+  const t = clock.getElapsedTime();
+  leafMat.uniforms.uTime.value = t;
+  if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
+
+  // pointer parallax, eased
+  const k = reduceMotion ? 0.02 : 0.045;
+  lookNow.x += (look.x - lookNow.x) * k;
+  lookNow.y += (look.y - lookNow.y) * k;
+
+  let roll = 0;
+  if (flight) {
+    const u = Math.min(1, (t - flight.start) / FLIGHT_S);
+    const e = ease(u);
+    camera.position.y = GROUND_Y + RISE * e;
+    roll = reduceMotion ? 0 : u * u * 0.5;             // slow spiral as it climbs
+    const baseFov = innerWidth > innerHeight ? 96 : 108;
+    camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
+    camera.updateProjectionMatrix();
+    sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
+    if (u > 0.5) vignette.classList.add('lift');
+    if (u > 0.86) flash.classList.add('on');
+    if (u >= 1 && t - flight.start > FLIGHT_S + 0.8) land();
+  } else if (!reduceMotion) {
+    // lying still: a breath of drift
+    lookNow.x += Math.sin(t * 0.23) * 0.0008;
+    lookNow.y += Math.cos(t * 0.19) * 0.0006;
+  }
+
+  const idle = flight ? 0.35 : 1;
+  dirV.set(lookNow.x * 0.14 * idle, 1, lookNow.y * 0.14 * idle).normalize();
+  target.copy(camera.position).add(dirV);
+  camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
+  camera.lookAt(target);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
