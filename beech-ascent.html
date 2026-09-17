@@ -893,6 +893,9 @@ function land() {
   skyStart = null;
   clearT = null;
   replay.classList.remove('show');
+  looseLeaves.length = 0; // the opening never has loose leaves
+  leavesMade = 0;
+  heroDue = false;
   inkFor(0);
   say(null);
   for (const { sp, base } of puffs) sp.material.opacity = base;
@@ -1078,8 +1081,8 @@ const SPRITES = [
   leafSprite(['#8f9f1e', '#d8ae22']),
 ];
 const looseLeaves = [];
-const MAX_LEAVES = 12;
-let lastT = 0, nextLeafAt = 0, heroDue = false;
+const MAX_LEAVES = 5; // per visit above the treetops, the first one included
+let lastT = 0, nextLeafAt = 0, heroDue = false, leavesMade = 0;
 function spawnLeaf(t, hero) {
   const W = innerWidth, H = innerHeight;
   let from, aim;
@@ -1107,15 +1110,18 @@ function spawnLeaf(t, hero) {
     sink: hero ? 34 : 22 + Math.random() * 18,             // slow terminal fall, px per second
     size: hero ? 56 : 30 + Math.random() * 40,
     sprite: hero ? SPRITES[0] : SPRITES[Math.floor(Math.random() * SPRITES.length)],
-    spin: Math.random() * 6.3, spinRate: (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.9),
+    spin: Math.random() * 6.3,
+    tilt: (Math.random() - 0.5) * 1.2, // the angle it hangs at; it never spins
     born: t,
   });
 }
 function flyLeaves(t, dt, aboveTrees) {
   // a steady trickle for as long as the camera is at or above the treetops
-  if (heroDue) { spawnLeaf(t, true); heroDue = false; nextLeafAt = t + 0.9; }
-  else if (aboveTrees && t > nextLeafAt && looseLeaves.length < MAX_LEAVES) {
+  if (!aboveTrees && !flight) leavesMade = 0; // back under the canopy: the next visit starts fresh
+  if (heroDue) { heroDue = false; if (leavesMade < MAX_LEAVES) { spawnLeaf(t, true); leavesMade++; nextLeafAt = t + 0.9; } }
+  else if (aboveTrees && t > nextLeafAt && leavesMade < MAX_LEAVES) {
     spawnLeaf(t, false);
+    leavesMade++;
     nextLeafAt = t + 0.8 + Math.random() * 1.6;
   }
   lctx.clearRect(0, 0, innerWidth, innerHeight);
@@ -1135,15 +1141,12 @@ function flyLeaves(t, dt, aboveTrees) {
     L.x += L.vx * dt;
     L.y += L.vy * dt;
     if (L.y > innerHeight + 70 || L.x < -120 || L.x > innerWidth + 120) { looseLeaves.splice(i, 1); continue; }
-    // tumbling while pushed; leaning into each swing and fluttering while it sinks
-    const lean = Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * 2.3 + L.spin) * 0.18;
-    const tumble = (L.fallAt === null ? t : L.fallAt) * 1.4 * L.spinRate + L.spin;
-    const roll = L.fallAt === null ? tumble : lean + tumble * Math.exp(-(t - L.fallAt) * 0.9);
-    const flutter = 0.7 + 0.3 * Math.cos(t * 3.1 + L.spin);
+    // no spinning or flipping: the leaf keeps its own hang angle and only leans
+    // gently into the direction it is drifting, with a slow rock on top
+    const roll = L.tilt + Math.atan2(L.vx, 260) * 0.8 + Math.sin(t * 0.9 + L.spin) * 0.08;
     lctx.save();
     lctx.translate(L.x, L.y);
     lctx.rotate(roll);
-    lctx.scale(flutter, 1);
     lctx.globalAlpha = Math.min(1, (t - L.born) * 2);
     lctx.drawImage(L.sprite, -L.size / 2, -L.size / 2, L.size, L.size);
     lctx.restore();
