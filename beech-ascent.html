@@ -35,7 +35,8 @@
     /* faded-print look: a little less saturation and contrast, a warm cast */
     filter: saturate(0.84) contrast(0.93) sepia(0.12) brightness(1.03);
   }
-  /* loose leaves drifting across the frame once the camera reaches the treetops */
+  /* loose leaves drifting across the frame once the camera reaches the treetops.
+     The canvas sits above the white-out layer, so they keep falling over the white. */
   .leaf {
     position: fixed;
     inset: 0;
@@ -186,12 +187,12 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
-<canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
 <div class="wash"></div>
 <div class="leak"></div>
 <div class="vignette"></div>
 <div class="flash" id="flash"></div>
+<canvas class="leaf" id="leaf"></canvas>
 <p class="msg" id="msg"></p>
 <button class="replay" id="replay" type="button">replay</button>
 <label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
