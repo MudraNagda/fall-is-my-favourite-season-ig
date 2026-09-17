@@ -625,13 +625,108 @@ const canopy = new THREE.Mesh(leafGeo, leafMat);
 canopy.frustumCulled = false;
 scene.add(canopy);
 
+// ---- clouds: three loose drifts of cotton fluff the flight passes through --
+function puffTexture() {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const r = mulberry(5);
+  // several soft blobs offset from centre, so a puff is lumpy rather than round
+  for (let i = 0; i < 7; i++) {
+    const cx = S / 2 + (r() - 0.5) * S * 0.36;
+    const cy = S / 2 + (r() - 0.5) * S * 0.36;
+    const rad = S * (0.18 + r() * 0.22);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    g.addColorStop(0, 'rgba(255,255,255,0.32)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.12)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const puffTex = puffTexture();
+const clouds = new THREE.Group();
+scene.add(clouds);
+const puffs = [];
+// [height, x, z, scale]: the camera climbs through each in turn near the top
+[[116, 0, -3, 1.0], [131, 5, 4, 1.15], [150, -4, 2, 1.3]].forEach(([y, cx, cz, sc]) => {
+  for (let i = 0; i < 46; i++) {
+    const a = rr(0, Math.PI * 2);
+    const rad = Math.pow(rnd(), 0.55) * 13 * sc;
+    const size = (5 + rnd() * 9) * sc;
+    const base = 0.08 + rnd() * 0.14;
+    const mat = new THREE.SpriteMaterial({
+      map: puffTex, transparent: true, depthWrite: false, fog: false,
+      opacity: base, color: new THREE.Color('#fdf8f0'), rotation: rr(0, 6.3),
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.position.set(cx + Math.cos(a) * rad, y + (rnd() - 0.5) * 7, cz + Math.sin(a) * rad);
+    sp.scale.set(size, size, 1);
+    clouds.add(sp);
+    puffs.push({ sp, base });
+  }
+});
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+// ---- birds: two silhouettes crossing the sky at 90% of the climb -----------
+const inkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#2a1d14'), side: THREE.DoubleSide, fog: false });
+function flatShape(pts) {
+  const sh = new THREE.Shape();
+  sh.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
+  sh.closePath();
+  return new THREE.ShapeGeometry(sh);
+}
+function makeBird(size) {
+  // built in the xy plane heading +y, then laid flat so it's seen from below
+  const bird = new THREE.Group();
+  bird.add(new THREE.Mesh(flatShape([[0, -0.5], [0.08, -0.15], [0.06, 0.4], [0, 0.58], [-0.06, 0.4], [-0.08, -0.15]]), inkMat));
+  const wingPts = [[0, 0.16], [-0.55, 0.28], [-1.0, 0.3], [-1.06, 0.1], [-0.7, -0.14], [-0.3, -0.2], [0, -0.14]];
+  const left = new THREE.Mesh(flatShape(wingPts), inkMat);
+  const right = new THREE.Mesh(flatShape(wingPts.map(([x, y]) => [-x, y])), inkMat);
+  const lp = new THREE.Group(); lp.position.x = -0.05; lp.add(left);
+  const rp = new THREE.Group(); rp.position.x = 0.05; rp.add(right);
+  bird.add(lp, rp);
+  bird.rotation.x = -Math.PI / 2;
+  const rig = new THREE.Group();
+  rig.add(bird);
+  rig.scale.setScalar(size);
+  rig.visible = false;
+  scene.add(rig);
+  return { rig, lp, rp };
+}
+const birds = [
+  // near: big, low over the camera, crossing left to right
+  { ...makeBird(1.5), up: 18, z: -4, from: -28, to: 28, dur: 2.2, flapHz: 3.0, heading: -Math.PI / 2 },
+  // far: small, high, crossing the other way and a little later
+  { ...makeBird(1.1), up: 48, z: 9, from: 58, to: -58, dur: 2.8, flapHz: 4.2, heading: Math.PI / 2, delay: 0.25 },
+];
+let birdsStart = null;
+function animateBirds(t) {
+  for (const b of birds) {
+    const k = (t - birdsStart - (b.delay || 0)) / b.dur;
+    if (k < 0 || k > 1) { b.rig.visible = false; continue; }
+    b.rig.visible = true;
+    // ride at a fixed height above the climbing camera so the crossing stays in frame
+    b.rig.position.set(b.from + (b.to - b.from) * k, camera.position.y + b.up + Math.sin(k * 6.3) * 0.6, b.z);
+    b.rig.rotation.y = b.heading;
+    const flap = Math.sin(t * b.flapHz * Math.PI * 2) * 0.6;
+    b.lp.rotation.y = flap;
+    b.rp.rotation.y = -flap;
+  }
+}
+
 // ---- camera + flight -------------------------------------------------------
 const flash = document.getElementById('flash');
 const vignette = document.querySelector('.vignette');
 const look = { x: 0, y: 0 };     // pointer parallax target
 const lookNow = { x: 0, y: 0 };
 let flight = null;               // { start: seconds }
-const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
+const FLIGHT_S = reduceMotion ? 5.6 : 8.2;
 const RISE = 150;
 
 // slow lift off the ground, then the shot up through the crown
@@ -643,6 +738,9 @@ function launch() {
 }
 function land() {
   flight = null;
+  birdsStart = null;
+  for (const b of birds) b.rig.visible = false;
+  for (const { sp, base } of puffs) sp.material.opacity = base;
   camera.position.set(0, GROUND_Y, 0);
   camera.fov = 96;
   camera.updateProjectionMatrix();
@@ -724,17 +822,24 @@ function frame() {
 
   let roll = 0;
   if (flight) {
-    const u = Math.min(1, (t - flight.start) / FLIGHT_S);
+    const el = t - flight.start;
+    const u = Math.min(1, el / FLIGHT_S);
     const e = ease(u);
-    camera.position.y = GROUND_Y + RISE * e;
+    // the shot up, then a slow drift on through the last cloud while the birds cross
+    camera.position.y = GROUND_Y + RISE * e + Math.max(0, el - FLIGHT_S) * 14;
     roll = reduceMotion ? 0 : u * u * 0.5;             // slow spiral as it climbs
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
-    sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
+    sky.material.uniforms.uLift.value = Math.min(1, Math.max(0, (el - FLIGHT_S - 1.5) / 1.2));
     if (u > 0.5) vignette.classList.add('lift');
-    if (u > 0.86) flash.classList.add('on');
-    if (u >= 1 && t - flight.start > FLIGHT_S + 0.8) land();
+    if (u >= 0.9 && birdsStart === null) birdsStart = t;
+    if (birdsStart !== null) animateBirds(t);
+    // puffs fade out as they pass right through the lens, so a cloud reads as
+    // wisps streaming past rather than a white wall
+    for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
+    if (el > FLIGHT_S + 2.2) flash.classList.add('on');
+    if (el > FLIGHT_S + 3.6) land();
   } else if (!reduceMotion) {
     // lying still: a breath of drift
     lookNow.x += Math.sin(t * 0.23) * 0.0008;
