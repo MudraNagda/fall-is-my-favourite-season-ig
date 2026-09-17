@@ -68,6 +68,7 @@
     /* hard-light, not overlay: overlay does nothing over white, hard-light still
        lets the dark specks through, so the grain carries onto the wash */
     mix-blend-mode: hard-light;
+    image-rendering: pixelated; /* keeps coarser grain crisp when its size is turned up */
   }
   /* lifted blacks and a faded amber cast, like an old colour print */
   .wash {
@@ -82,8 +83,8 @@
     animation: leak 14s ease-in-out infinite alternate;
   }
   @keyframes leak {
-    0% { transform: translate(0, 0) scale(1); opacity: 0.35; }
-    100% { transform: translate(-6%, 8%) scale(1.15); opacity: 0.7; }
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(-6%, 8%) scale(1.15); }
   }
   @media (prefers-reduced-motion: reduce) {
     .leak { animation: none; }
@@ -92,6 +93,7 @@
     background: radial-gradient(ellipse 78% 72% at 50% 50%, rgba(60, 30, 10, 0) 55%, rgba(60, 30, 10, 0.42) 100%);
     transition: opacity 1.4s ease;
   }
+  .vignette { opacity: var(--vig, 1); }
   .vignette.lift { opacity: 0; }
   /* the white-out at the top of the flight, then the return to the ground */
   .flash {
@@ -236,6 +238,7 @@
 <p class="msg" id="msg"></p>
 <canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
+<canvas class="grain" id="grainWhite" style="mix-blend-mode: hard-light; opacity: 0"></canvas>
 <p class="scrollcue" id="scrollcue" aria-hidden="true">scroll</p>
 <button class="replay" id="replay" type="button">replay</button>
 <!-- the height slider is hidden for now: remove the "hidden" attribute to bring it back -->
@@ -261,6 +264,23 @@ import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/
 // ---------------------------------------------------------------------------
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---- tunable parameters -------------------------------------------------------
+// The shipped look. Open the page with #dials in the address for a panel of
+// sliders over these; nothing here changes unless that panel is open.
+const DEFAULTS = {
+  // grain
+  grainOpacity: 0.3, grainFlicker: 0, grainSize: 1.5, grainContrast: 135, grainFps: 29, grainBlend: 'soft-light',
+  // faded print
+  saturate: 0.87, contrast: 0.89, sepia: 0.12, brightness: 1.03, wash: 0.47, leak: 0.49, vignette: 0.48,
+  // movement
+  wind: 1, windSpeed: 1, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.5, tighten: 22, drift: 1, clouds: 2,
+  // loose leaves
+  leafCount: 5, leafFall: 1, leafSway: 1.7, leafSize: 1,
+  // scroll
+  scrollVh: 100,
+};
+const P = { ...DEFAULTS };
 
 // deterministic rng so the wood is the same wood on every visit
 function mulberry(seed) {
@@ -874,7 +894,7 @@ history.scrollRestoration = 'manual';
 scrollTo(0, 0);
 document.documentElement.classList.add('locked');
 const smoother = (x) => { const k = Math.min(1, Math.max(0, x)); return k * k * k * (k * (k * 6 - 15) + 10); };
-const washProgress = () => (landed ? Math.min(1, Math.max(0, scrollY / Math.max(1, innerHeight))) : 0);
+const washProgress = () => (landed ? Math.min(1, Math.max(0, scrollY / Math.max(1, (innerHeight * P.scrollVh) / 100))) : 0);
 function say(html) {
   if (!html) { msg.classList.remove('show'); return; }
   msg.innerHTML = html;
@@ -911,7 +931,6 @@ for (const el of [document.getElementById('zoom'), replay]) {
 replay.addEventListener('click', () => land());
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
-const FLIGHT_S = (reduceMotion ? 4.6 : 6.4) / 1.2; // the climb through the trees, 1.2x faster than it first was
 const SKY_AT = 31; // ~90% of tree height: the second line of text appears here
 const RISE = 150;
 
@@ -1198,7 +1217,6 @@ function randomLeafColour() {
 }
 const randomLeafSprite = () => leafSprite(Array.from({ length: 2 + Math.floor(Math.random() * 2) }, randomLeafColour));
 const looseLeaves = [];
-const MAX_LEAVES = 5; // per visit above the treetops, the first one included
 let lastT = 0, nextLeafAt = 0, heroDue = false, leavesMade = 0;
 function spawnLeaf(t, hero) {
   const W = innerWidth, H = innerHeight;
@@ -1243,8 +1261,8 @@ function spawnLeaf(t, hero) {
 function flyLeaves(t, dt, aboveTrees) {
   // a steady trickle for as long as the camera is at or above the treetops
   if (!aboveTrees && !flight) leavesMade = 0; // back under the canopy: the next visit starts fresh
-  if (heroDue) { heroDue = false; if (leavesMade < MAX_LEAVES) { spawnLeaf(t, true); leavesMade++; nextLeafAt = t + 0.9; } }
-  else if (aboveTrees && t > nextLeafAt && leavesMade < MAX_LEAVES) {
+  if (heroDue) { heroDue = false; if (leavesMade < P.leafCount) { spawnLeaf(t, true); leavesMade++; nextLeafAt = t + 0.9; } }
+  else if (aboveTrees && t > nextLeafAt && leavesMade < P.leafCount) {
     spawnLeaf(t, false);
     leavesMade++;
     nextLeafAt = t + 0.8 + Math.random() * 1.6;
@@ -1262,8 +1280,8 @@ function flyLeaves(t, dt, aboveTrees) {
     if (L.fallAt !== null) {
       const f = t - L.fallAt;
       // side to side, with a slower second wander so no two zigzags match
-      wantX = (Math.sin(f * L.swayHz + L.spin) + Math.sin(f * L.swayHz * L.sway2Hz + L.spin * 2) * L.sway2) * L.swayAmp;
-      wantY = Math.min(L.sink, 8 + f * 5);                 // and slowly down
+      wantX = (Math.sin(f * L.swayHz + L.spin) + Math.sin(f * L.swayHz * L.sway2Hz + L.spin * 2) * L.sway2) * L.swayAmp * P.leafSway;
+      wantY = Math.min(L.sink, 8 + f * 5) * P.leafFall;    // and slowly down
       ease = L.settle;
     }
     L.vx += (wantX - L.vx) * ease;
@@ -1285,13 +1303,14 @@ function flyLeaves(t, dt, aboveTrees) {
     lctx.save();
     lctx.translate(L.x, L.y);
     lctx.rotate(roll);
-    const fade = Math.min(1, (t - L.born) * 2), half = L.size / 2;
+    const size = L.size * P.leafSize;
+    const fade = Math.min(1, (t - L.born) * 2), half = size / 2;
     const halves = [[0, -half * kl, half * kl + 0.6, kl], [64, 0, half * kr, kr]]; // [source x, dest x, dest width, facing]
     for (const [sx, dx, dw, k] of halves) {
       lctx.globalAlpha = fade;
-      lctx.drawImage(L.sprite.base, sx, 0, 64, 128, dx, -half, dw, L.size);
+      lctx.drawImage(L.sprite.base, sx, 0, 64, 128, dx, -half, dw, size);
       lctx.globalAlpha = fade * Math.min(0.5, (1 - k) * 4);
-      lctx.drawImage(L.sprite.dark, sx, 0, 64, 128, dx, -half, dw, L.size);
+      lctx.drawImage(L.sprite.dark, sx, 0, 64, 128, dx, -half, dw, size);
     }
     lctx.restore();
   }
@@ -1303,34 +1322,47 @@ function flyLeaves(t, dt, aboveTrees) {
 // silver halide does instead of sitting still like a texture.
 const grainC = document.getElementById('grain');
 const gctx = grainC.getContext('2d');
+// Soft-light grain vanishes over white, so a twin of the same grain in hard-light
+// fades in with the wash and carries the texture onto the white page.
+const grainW = document.getElementById('grainWhite');
+const gwctx = grainW.getContext('2d');
+let washNow = 0;
 const TILE = 192;
-const tiles = Array.from({ length: 6 }, () => {
-  const c = document.createElement('canvas');
-  c.width = c.height = TILE;
-  const cx = c.getContext('2d');
-  const img = cx.createImageData(TILE, TILE);
-  const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    // fine, even grain: one speck per device pixel
-    const v = 128 + (Math.random() - 0.5) * 200;
-    d[i] = d[i + 1] = d[i + 2] = v;
-    d[i + 3] = 255;
-  }
-  cx.putImageData(img, 0, 0);
-  return gctx.createPattern(c, 'repeat');
-});
+let tiles = [];
+function bakeTiles() {
+  tiles = Array.from({ length: 6 }, () => {
+    const c = document.createElement('canvas');
+    c.width = c.height = TILE;
+    const cx = c.getContext('2d');
+    const img = cx.createImageData(TILE, TILE);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      // fine, even grain: one speck per device pixel
+      const v = 128 + (Math.random() - 0.5) * P.grainContrast;
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
+    cx.putImageData(img, 0, 0);
+    return gctx.createPattern(c, 'repeat');
+  });
+}
+bakeTiles();
 function sizeGrain() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
-  grainC.width = Math.ceil(innerWidth * dpr);
-  grainC.height = Math.ceil(innerHeight * dpr);
+  grainC.width = Math.ceil((innerWidth * dpr) / P.grainSize);
+  grainC.height = Math.ceil((innerHeight * dpr) / P.grainSize);
+  grainW.width = grainC.width;
+  grainW.height = grainC.height;
 }
-let grainTick = 0;
+let lastGrain = -1;
 function drawGrain() {
   gctx.setTransform(1, 0, 0, 1, Math.random() * TILE, Math.random() * TILE);
   gctx.fillStyle = tiles[Math.floor(Math.random() * tiles.length)];
   gctx.fillRect(-TILE, -TILE, grainC.width + TILE * 2, grainC.height + TILE * 2);
   // projector flicker: tiny exposure wobble
-  grainC.style.opacity = (0.24 + Math.random() * 0.05).toFixed(3);
+  grainC.style.opacity = (P.grainOpacity + Math.random() * P.grainFlicker).toFixed(3);
+  if (washNow > 0.01) { gwctx.clearRect(0, 0, grainW.width, grainW.height); gwctx.drawImage(grainC, 0, 0); }
+  grainW.style.opacity = (P.grainOpacity * 0.8 * washNow).toFixed(3);
 }
 addEventListener('resize', () => { sizeGrain(); drawGrain(); });
 sizeGrain();
@@ -1338,23 +1370,26 @@ drawGrain();
 
 const clock = new THREE.Clock();
 const dirV = new THREE.Vector3(), target = new THREE.Vector3();
+let windClock = 0;
 function frame() {
   const t = clock.getElapsedTime();
   const dt = Math.min(0.05, t - lastT); lastT = t;
   const yBefore = camera.position.y;
-  leafMat.uniforms.uTime.value = t;
-  if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
+  windClock += dt * P.windSpeed;
+  leafMat.uniforms.uTime.value = windClock;
+  leafMat.uniforms.uWind.value = reduceMotion ? 0 : P.wind;
+  if (!reduceMotion && P.grainFps > 0 && t - lastGrain >= 1 / P.grainFps) { lastGrain = t; drawGrain(); }
 
   if (!flight && autoAt !== null && t >= autoAt) launch();
   let roll = 0;
   if (flight) {
     const el = t - flight.start;
-    const u = Math.min(1, el / FLIGHT_S);
+    const u = Math.min(1, el / P.flight);
     const e = ease(u);
     camera.position.y = flight.from + (GROUND_Y + RISE - flight.from) * e;
-    roll = reduceMotion ? 0 : u * u * 0.5;             // slow spiral as it climbs
+    roll = reduceMotion ? 0 : u * u * P.spiral;        // slow spiral as it climbs
     const baseFov = innerWidth > innerHeight ? 96 : 108;
-    camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
+    camera.fov = baseFov - P.tighten * Math.pow(u, 1.6); // tightening toward the sky
     camera.updateProjectionMatrix();
     // landed in the blue: scrolling is unlocked and now drives the wash
     if (u >= 1 && !landed) {
@@ -1363,6 +1398,7 @@ function frame() {
       scrollcue.classList.add('show');
     }
     const wash = washProgress(); // 0 at the top of the page, 1 after a screen-height of scroll
+    washNow = smoother(wash);
     // one even brightening of the whole sky, eased in and out so it neither starts
     // nor lands abruptly however the visitor scrolls
     sky.material.uniforms.uLift.value = smoother(wash);
@@ -1377,7 +1413,7 @@ function frame() {
     // as wisps streaming past rather than a white wall
     // and they melt away as the sky brightens, so no grey smudges are left on the white
     const cloudFade = 1 - sky.material.uniforms.uLift.value;
-    for (const { sp, base } of puffs) sp.material.opacity = base * cloudFade * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
+    for (const { sp, base } of puffs) sp.material.opacity = base * P.clouds * cloudFade * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
     // the flat white layer only settles in over the last stretch, once the sky is
     // already nearly white, so its arrival cannot be seen
     flash.classList.add('on');
@@ -1391,8 +1427,8 @@ function frame() {
   }
   if (!flight && !reduceMotion) {
     // lying still: a breath of drift
-    lookNow.x = Math.sin(t * 0.23) * 0.05;
-    lookNow.y = Math.cos(t * 0.19) * 0.04;
+    lookNow.x = Math.sin(t * 0.23) * 0.05 * P.drift;
+    lookNow.y = Math.cos(t * 0.19) * 0.04 * P.drift;
   }
 
   const idle = flight ? 0.35 : 1;
@@ -1409,6 +1445,146 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
+
+// ---- dials ---------------------------------------------------------------------
+// A tuning panel, only built when the address ends in #dials. Every row is a
+// slider you drag across; values persist in this browser until Reset. Nothing
+// here runs for ordinary visitors.
+function applyLook() {
+  canvas.style.filter = `saturate(${P.saturate}) contrast(${P.contrast}) sepia(${P.sepia}) brightness(${P.brightness})`;
+  document.querySelector('.wash').style.opacity = P.wash;
+  document.querySelector('.leak').style.opacity = P.leak;
+  vignette.style.setProperty('--vig', P.vignette);
+  grainC.style.mixBlendMode = P.grainBlend;
+  document.querySelector('.track').style.height = `${100 + P.scrollVh}vh`;
+}
+applyLook();
+if (location.hash.includes('dials')) {
+  try { Object.assign(P, JSON.parse(localStorage.getItem('fall-dials') || '{}')); } catch (e) { /* storage blocked: start from defaults */ }
+  const GROUPS = [
+    ['Grain', [
+      ['grainOpacity', 'opacity', 0, 0.8, 0.01],
+      ['grainFlicker', 'flicker', 0, 0.3, 0.01],
+      ['grainSize', 'speck size', 1, 5, 0.5, () => { sizeGrain(); drawGrain(); }],
+      ['grainContrast', 'contrast', 0, 255, 1, () => { bakeTiles(); drawGrain(); }],
+      ['grainFps', 'frames per second', 0, 60, 1],
+      ['grainBlend', 'blend', ['hard-light', 'overlay', 'soft-light', 'multiply', 'normal']],
+    ]],
+    ['Faded print', [
+      ['saturate', 'saturation', 0, 1.5, 0.01],
+      ['contrast', 'contrast', 0.5, 1.5, 0.01],
+      ['sepia', 'sepia', 0, 1, 0.01],
+      ['brightness', 'brightness', 0.6, 1.4, 0.01],
+      ['wash', 'amber wash', 0, 2, 0.01],
+      ['leak', 'light leak', 0, 1, 0.01],
+      ['vignette', 'vignette', 0, 1, 0.01],
+    ]],
+    ['Movement', [
+      ['wind', 'wind strength', 0, 4, 0.05],
+      ['windSpeed', 'wind speed', 0, 4, 0.05],
+      ['flight', 'climb, seconds', 2, 14, 0.1],
+      ['spiral', 'spiral', 0, 2, 0.01],
+      ['tighten', 'lens tighten', 0, 50, 1],
+      ['drift', 'idle drift', 0, 6, 0.1],
+      ['clouds', 'clouds', 0, 3, 0.05],
+    ]],
+    ['Loose leaves', [
+      ['leafCount', 'how many', 0, 30, 1],
+      ['leafFall', 'fall speed', 0.2, 4, 0.05],
+      ['leafSway', 'sway', 0, 3, 0.05],
+      ['leafSize', 'size', 0.4, 3, 0.05],
+    ]],
+    ['Scroll', [
+      ['scrollVh', 'wash distance, vh', 30, 300, 5],
+    ]],
+  ];
+  const css = document.createElement('style');
+  css.textContent = `
+    .dk { position: fixed; top: 14px; left: 14px; z-index: 60; width: 264px; max-height: calc(100vh - 28px); overflow: auto; overscroll-behavior: contain;
+      background: rgba(22, 22, 24, 0.9); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: #f2f2f2; border-radius: 16px; padding: 8px;
+      font: 500 12px/1 'Inter', system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); cursor: default; user-select: none; -webkit-user-select: none; }
+    .dk * { box-sizing: border-box; }
+    .dk-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 10px; font-weight: 600; letter-spacing: 0.01em; }
+    .dk-head button { all: unset; cursor: pointer; opacity: 0.6; padding: 4px 6px; border-radius: 6px; }
+    .dk-head button:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+    .dk-group { margin-top: 4px; }
+    .dk-group > summary { list-style: none; cursor: pointer; padding: 9px 8px; border-radius: 9px; font-weight: 600; opacity: 0.85; display: flex; justify-content: space-between; }
+    .dk-group > summary::-webkit-details-marker { display: none; }
+    .dk-group > summary::after { content: '+'; opacity: 0.5; }
+    .dk-group[open] > summary::after { content: '−'; }
+    .dk-group > summary:hover { background: rgba(255, 255, 255, 0.06); }
+    .dk-row { position: relative; height: 34px; margin: 4px 0; border-radius: 9px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+    .dk-fill { position: absolute; inset: 0 auto 0 0; background: rgba(255, 255, 255, 0.13); pointer-events: none; }
+    .dk-row:hover .dk-fill { background: rgba(255, 255, 255, 0.19); }
+    .dk-label, .dk-val { position: absolute; top: 0; height: 34px; line-height: 34px; pointer-events: none; }
+    .dk-label { left: 11px; opacity: 0.78; }
+    .dk-val { right: 11px; font-variant-numeric: tabular-nums; }
+    .dk-row input[type=range] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ew-resize; }
+    .dk-row select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; }
+    .dk-row:focus-within { outline: 1px solid rgba(255, 255, 255, 0.5); }
+    .dk-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 8px; }
+    .dk-actions button { all: unset; text-align: center; height: 34px; line-height: 34px; border-radius: 9px; background: rgba(255, 255, 255, 0.1); cursor: pointer; font-weight: 600; }
+    .dk-actions button:hover { background: rgba(255, 255, 255, 0.2); }
+    .dk.min .dk-body { display: none; }`;
+  document.head.appendChild(css);
+
+  const panel = document.createElement('div');
+  panel.className = 'dk';
+  panel.innerHTML = '<div class="dk-head"><span>Dials</span><button type="button" data-min>hide</button></div><div class="dk-body"></div>';
+  const body = panel.querySelector('.dk-body');
+  const refreshers = [];
+  const save = () => { try { localStorage.setItem('fall-dials', JSON.stringify(P)); } catch (e) { /* ignore */ } };
+  const places = (step) => (String(step).split('.')[1] || '').length;
+  GROUPS.forEach(([title, rows], gi) => {
+    const group = document.createElement('details');
+    group.className = 'dk-group';
+    group.open = gi < 3;
+    group.innerHTML = `<summary>${title}</summary>`;
+    for (const [key, label, a, b, step, after] of rows) {
+      const row = document.createElement('div');
+      row.className = 'dk-row';
+      if (Array.isArray(a)) {
+        row.innerHTML = `<span class="dk-label">${label}</span><span class="dk-val"></span><select aria-label="${label}">${a.map((o) => `<option>${o}</option>`).join('')}</select>`;
+        const sel = row.querySelector('select'), val = row.querySelector('.dk-val');
+        const show = () => { sel.value = P[key]; val.textContent = P[key]; };
+        sel.addEventListener('change', () => { P[key] = sel.value; show(); applyLook(); save(); });
+        refreshers.push(show);
+      } else {
+        row.innerHTML = `<div class="dk-fill"></div><span class="dk-label">${label}</span><span class="dk-val"></span><input type="range" min="${a}" max="${b}" step="${step}" aria-label="${label}">`;
+        const input = row.querySelector('input'), val = row.querySelector('.dk-val'), fill = row.querySelector('.dk-fill');
+        const show = () => {
+          input.value = P[key];
+          val.textContent = Number(P[key]).toFixed(places(step));
+          fill.style.width = `${((P[key] - a) / (b - a)) * 100}%`;
+        };
+        input.addEventListener('input', () => { P[key] = Number(input.value); show(); applyLook(); if (after) after(); save(); });
+        // double-click a row to put it back to the shipped value
+        row.addEventListener('dblclick', () => { P[key] = DEFAULTS[key]; show(); applyLook(); if (after) after(); save(); });
+        refreshers.push(show);
+      }
+      group.appendChild(row);
+    }
+    body.appendChild(group);
+  });
+  const actions = document.createElement('div');
+  actions.className = 'dk-actions';
+  actions.innerHTML = '<button type="button" data-replay>replay</button><button type="button" data-copy>copy</button><button type="button" data-reset>reset</button>';
+  body.appendChild(actions);
+  const refreshAll = () => { refreshers.forEach((f) => f()); applyLook(); bakeTiles(); sizeGrain(); drawGrain(); };
+  actions.querySelector('[data-replay]').addEventListener('click', () => land());
+  actions.querySelector('[data-copy]').addEventListener('click', async (e) => {
+    const text = JSON.stringify(P, null, 2);
+    try { await navigator.clipboard.writeText(text); e.target.textContent = 'copied'; }
+    catch (err) { console.log(text); e.target.textContent = 'in console'; }
+    setTimeout(() => { e.target.textContent = 'copy'; }, 1200);
+  });
+  actions.querySelector('[data-reset]').addEventListener('click', () => { Object.assign(P, DEFAULTS); try { localStorage.removeItem('fall-dials'); } catch (e) { /* ignore */ } refreshAll(); });
+  panel.querySelector('[data-min]').addEventListener('click', (e) => { panel.classList.toggle('min'); e.target.textContent = panel.classList.contains('min') ? 'show' : 'hide'; });
+  // the panel never starts music, scrolls the page, or reaches the scene
+  for (const ty of ['pointerdown', 'keydown', 'wheel']) panel.addEventListener(ty, (e) => e.stopPropagation());
+  document.body.appendChild(panel);
+  refreshAll();
+}
 </script>
 </body>
 </html>
