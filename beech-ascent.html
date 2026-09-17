@@ -79,23 +79,6 @@
     transition: opacity 0.9s ease;
   }
   .flash.on { opacity: 1; }
-  /* one line of guidance in the centre of the sky */
-  .msg {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    margin: 0;
-    padding: 0 24px;
-    pointer-events: none;
-    font: 600 12px/1.6 'Inter', system-ui, -apple-system, sans-serif;
-    letter-spacing: 0.01em;
-    color: rgba(255, 255, 255, 0.75);
-    text-align: center;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-  .msg.show { opacity: 1; }
 
 </style>
 </head>
@@ -106,7 +89,6 @@
 <div class="leak"></div>
 <div class="vignette"></div>
 <div class="flash" id="flash"></div>
-<p class="msg" id="msg"></p>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -693,28 +675,124 @@ const puffs = [];
     puffs.push({ sp, base });
   }
 });
+// ---- cloud writing ----------------------------------------------------------
+// A couple of thousand small puffs live inside the three clouds as extra fluff.
+// Once the climb clears the treetops they stream out and gather into two lines
+// of text held ahead of the camera, screen-aligned, so the clouds themselves
+// spell the words. Letter shapes are sampled from a 2D canvas.
+const WORDS = ["don't forget to look at the forest", "when you're amongst the trees"];
+const CLOUD_HOMES = [[44, 0, -2, 1.2], [58, -17, 13, 1.6], [72, 19, -15, 1.8]];
+const TEXT_AHEAD = 40;     // how far ahead of the lens the words hang
+const TEXT_SPAN = 0.7;    // fraction of the visible width the words fill
+let writing = null;
+async function buildWriting() {
+  try { await document.fonts.load("600 64px Inter"); } catch (e) { /* fall back to system sans */ }
+  const W = 1500, H = 220, FS = 64;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `600 ${FS}px Inter, system-ui, sans-serif`;
+  WORDS.forEach((line, i) => ctx.fillText(line, W / 2, H / 2 + (i - 0.5) * FS * 1.45));
+  const textW = Math.max(...WORDS.map((l) => ctx.measureText(l).width));
+  const data = ctx.getImageData(0, 0, W, H).data;
+  const pts = [];
+  const STEP = 3;
+  for (let y = 0; y < H; y += STEP) for (let x = 0; x < W; x += STEP) {
+    if (data[(y * W + x) * 4 + 3] > 140) pts.push([(x - W / 2) / textW, -(y - H / 2) / textW]); // unit: text width = 1
+  }
+  const r = mulberry(99);
+  while (pts.length > 2600) pts.splice(Math.floor(r() * pts.length), 1);
+  const N = pts.length;
+  const home = new Float32Array(N * 3), goal = new Float32Array(N * 2), seed = new Float32Array(N), pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const [y, cx, cz, sc] = CLOUD_HOMES[Math.floor(r() * 3)];
+    const a = r() * Math.PI * 2, rad = Math.pow(r(), 0.55) * 12 * sc;
+    home[i * 3] = cx + Math.cos(a) * rad;
+    home[i * 3 + 1] = y + (r() - 0.5) * 6;
+    home[i * 3 + 2] = cz + Math.sin(a) * rad;
+    goal[i * 2] = pts[i][0] + (r() - 0.5) * 0.002;
+    goal[i * 2 + 1] = pts[i][1] + (r() - 0.5) * 0.002;
+    seed[i] = r();
+  }
+  pos.set(home);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    uniforms: {
+      uMap: { value: puffTex }, uScale: { value: 1 }, uSize: { value: 1.8 },
+      uAlpha: { value: 0.35 }, uColor: { value: new THREE.Color('#fdf8f0') },
+    },
+    vertexShader: `
+      attribute float aSeed; uniform float uScale, uSize;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = uSize * (0.75 + 0.5 * aSeed) * uScale / max(0.1, -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D uMap; uniform vec3 uColor; uniform float uAlpha;
+      void main() {
+        float a = clamp(texture2D(uMap, gl_PointCoord).a * uAlpha, 0.0, 1.0);
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(uColor, a);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  writing = { N, home, goal, seed, pos, geo, mat };
+}
+buildWriting();
+const WHITE_PUFF = new THREE.Color('#fdf8f0'), INK_PUFF = new THREE.Color('#2b2724');
+const camR = new THREE.Vector3(), camU = new THREE.Vector3(), camF = new THREE.Vector3();
+function updateWriting(t, ink) {
+  if (!writing) return;
+  const { N, home, goal, seed, pos, geo, mat } = writing;
+  const since = skyStart === null ? -1 : t - skyStart;
+  const form = since < 0 ? 0 : sstep(0, 2.0, since);
+  const vfov = (camera.fov * Math.PI) / 180;
+  mat.uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan(vfov / 2));
+  // words keep a constant size on screen whatever the lens is doing
+  const span = TEXT_SPAN * 2 * TEXT_AHEAD * Math.tan(vfov / 2) * camera.aspect;
+  mat.uniforms.uSize.value = 1.8 + (span * 0.0125 - 1.8) * form;
+  mat.uniforms.uAlpha.value = 0.35 + 1.25 * form;
+  mat.uniforms.uColor.value.copy(WHITE_PUFF).lerp(INK_PUFF, ink);
+  if (since >= 0) {
+    camera.matrixWorld.extractBasis(camR, camU, camF); // camF points backwards
+    const cx = camera.position.x - camF.x * TEXT_AHEAD, cy = camera.position.y - camF.y * TEXT_AHEAD, cz = camera.position.z - camF.z * TEXT_AHEAD;
+    for (let i = 0; i < N; i++) {
+      const k = sstep(0, 1, (since - seed[i] * 0.8) / 1.3);
+      const wob = 0.0018 * span;
+      const gx = goal[i * 2] * span + Math.sin(t * 0.9 + seed[i] * 40) * wob;
+      const gy = goal[i * 2 + 1] * span + Math.cos(t * 0.8 + seed[i] * 31) * wob;
+      const tx = cx + camR.x * gx + camU.x * gy, ty = cy + camR.y * gx + camU.y * gy, tz = cz + camR.z * gx + camU.z * gy;
+      pos[i * 3] = home[i * 3] + (tx - home[i * 3]) * k;
+      pos[i * 3 + 1] = home[i * 3 + 1] + (ty - home[i * 3 + 1]) * k;
+      pos[i * 3 + 2] = home[i * 3 + 2] + (tz - home[i * 3 + 2]) * k;
+    }
+  } else {
+    pos.set(home);
+  }
+  geo.attributes.position.needsUpdate = true;
+}
+
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // ---- camera + flight -------------------------------------------------------
 const flash = document.getElementById('flash');
 const vignette = document.querySelector('.vignette');
-const msg = document.getElementById('msg');
 let skyStart = null; // moment the camera clears the treetops
-function say(html) {
-  if (!html) { msg.classList.remove('show'); return; }
-  msg.innerHTML = html;
-  msg.classList.add('show');
-}
-// white over blue sky, darkening to black as the sky washes out
-function inkFor(white) {
-  const c = Math.round(255 * (1 - white));
-  msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
-}
-say('click to soar');
 const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
 const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
-const SKY_AT = 31; // ~90% of tree height: the second line of text appears here
+const SKY_AT = 31; // ~90% of tree height: the clouds start gathering into words here
 const RISE = 150;
 
 // slow lift off the ground, then the shot up through the crown
@@ -723,13 +801,10 @@ const ease = (t) => Math.pow(t, 2.4);
 function launch() {
   if (flight) return;
   flight = { start: clock.getElapsedTime() };
-  say(null);
 }
 function land() {
   flight = null;
   skyStart = null;
-  inkFor(0);
-  say('click to soar');
   for (const { sp, base } of puffs) sp.material.opacity = base;
   camera.position.set(0, GROUND_Y, 0);
   camera.fov = 96;
@@ -801,7 +876,7 @@ function frame() {
   leafMat.uniforms.uTime.value = t;
   if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
 
-  let roll = 0;
+  let roll = 0, ink = 0;
   if (flight) {
     const el = t - flight.start;
     const u = Math.min(1, el / FLIGHT_S);
@@ -812,17 +887,17 @@ function frame() {
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
     sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
-    inkFor(sstep(0.8, 0.97, u));
+    // the words go dark just before the sky washes out, while it is still blue
+    // enough to carry them, so they never pass through the sky's own tone
+    ink = sstep(0.74, 0.83, u);
     if (u > 0.5) vignette.classList.add('lift');
-    if (camera.position.y >= SKY_AT && skyStart === null) {
-      skyStart = t;
-      say("don't forget to look at the forest<br>when you're amongst the trees");
-    }
+    if (camera.position.y >= SKY_AT && skyStart === null) skyStart = t;
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
-    if (u > 0.86) flash.classList.add('on');
-    if (u >= 1 && el > FLIGHT_S + 0.8) land();
+    // a beat at the top to read the clouds, then the white-out and the return
+    if (el > FLIGHT_S + 1.4) flash.classList.add('on');
+    if (el > FLIGHT_S + 2.4) land();
   } else if (!reduceMotion) {
     // lying still: a breath of drift
     lookNow.x = Math.sin(t * 0.23) * 0.05;
@@ -834,6 +909,8 @@ function frame() {
   target.copy(camera.position).add(dirV);
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
+  camera.updateMatrixWorld();
+  updateWriting(t, ink);
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
