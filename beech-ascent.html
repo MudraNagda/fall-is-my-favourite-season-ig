@@ -99,7 +99,8 @@
     display: grid;
     place-items: center;
     margin: 0;
-    padding: 0 24px;
+    padding: 0 max(24px, calc(50% - 330px)); /* keeps the longer line to a readable measure */
+    text-wrap: balance;
     pointer-events: none;
     font: italic 400 19px/1.45 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
     letter-spacing: 0.005em;
@@ -1240,7 +1241,7 @@ function frame() {
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
-      say("don't forget to look at the forest<br>when you're amongst the trees");
+      say('Mudra is a product designer with a background in CS and Human Computer Interaction.<br>She is currently enjoying the early days of fall.');
     }
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
