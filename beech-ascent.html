@@ -74,7 +74,7 @@
   .vignette.lift { opacity: 0; }
   /* the white-out at the top of the flight, then the return to the ground */
   .flash {
-    background: #d6e6f7;
+    background: #fbfaf4;
     opacity: 0;
     transition: opacity 0.9s ease;
   }
@@ -88,11 +88,10 @@
     margin: 0;
     padding: 0 24px;
     pointer-events: none;
-    font: 600 14px/1.5 'Inter', system-ui, -apple-system, sans-serif;
+    font: 600 12px/1.6 'Inter', system-ui, -apple-system, sans-serif;
     letter-spacing: 0.01em;
     color: rgba(255, 255, 255, 0.75);
     text-align: center;
-    text-wrap: balance;
     opacity: 0;
     transition: opacity 0.5s ease;
   }
@@ -106,8 +105,8 @@
 <div class="wash"></div>
 <div class="leak"></div>
 <div class="vignette"></div>
-<p class="msg" id="msg"></p>
 <div class="flash" id="flash"></div>
+<p class="msg" id="msg"></p>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -139,7 +138,8 @@ const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
 // ---- palette (sRGB, converted to linear by THREE.Color) --------------------
 const SKY_ZENITH = new THREE.Color('#0466C8');
 const SKY_HORIZON = new THREE.Color('#0466C8');
-const SUN_GLOW = new THREE.Color('#fff1d6');
+const SUN_GLOW = new THREE.Color('#f7ecc4'); // the faint yellow the sky passes through
+const SKY_WHITE = new THREE.Color('#fbfaf4'); // then almost white
 const FOG = new THREE.Color('#0466C8');
 const SUN_DIR = new THREE.Vector3(-0.62, 0.66, -0.42).normalize();
 
@@ -185,6 +185,7 @@ const sky = new THREE.Mesh(
       uZenith: { value: SKY_ZENITH },
       uHorizon: { value: SKY_HORIZON },
       uGlow: { value: SUN_GLOW },
+      uWhite: { value: SKY_WHITE },
       uSun: { value: SUN_DIR },
       uLift: { value: 0 }, // brightens as the viewer leaves the trees
     },
@@ -195,12 +196,13 @@ const sky = new THREE.Mesh(
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `
-      uniform vec3 uZenith, uHorizon, uGlow, uSun; uniform float uLift;
+      uniform vec3 uZenith, uHorizon, uGlow, uWhite, uSun; uniform float uLift;
       varying vec3 vDir;
       void main() {
         float h = clamp(vDir.y, 0.0, 1.0);
         vec3 col = mix(uHorizon, uZenith, pow(h, 0.65));
-        col = mix(col, uGlow, uLift * 0.85);
+        col = mix(col, uGlow, smoothstep(0.0, 0.55, uLift));   // a touch of yellow first
+        col = mix(col, uWhite, smoothstep(0.35, 1.0, uLift));  // then it washes out
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -698,10 +700,15 @@ const flash = document.getElementById('flash');
 const vignette = document.querySelector('.vignette');
 const msg = document.getElementById('msg');
 let skyStart = null; // moment the camera clears the treetops
-function say(text) {
-  if (!text) { msg.classList.remove('show'); return; }
-  msg.textContent = text;
+function say(html) {
+  if (!html) { msg.classList.remove('show'); return; }
+  msg.innerHTML = html;
   msg.classList.add('show');
+}
+// white over blue sky, darkening to black as the sky washes out
+function inkFor(white) {
+  const c = Math.round(255 * (1 - white));
+  msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
 }
 say('click to soar');
 const look = { x: 0, y: 0 };     // pointer parallax target
@@ -722,6 +729,7 @@ function launch() {
 function land() {
   flight = null;
   skyStart = null;
+  inkFor(0);
   say('click to soar');
   for (const { sp, base } of puffs) sp.material.opacity = base;
   camera.position.set(0, GROUND_Y, 0);
@@ -814,10 +822,11 @@ function frame() {
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
     sky.material.uniforms.uLift.value = Math.max(0, (u - 0.78) / 0.22);
+    inkFor(sstep(0.8, 0.97, u));
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
-      say("don't forget to look at the forest when you're amongst the trees");
+      say("don't forget to look at the forest<br>when you're amongst the trees");
     }
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
