@@ -700,6 +700,12 @@ const flash = document.getElementById('flash');
 const vignette = document.querySelector('.vignette');
 const msg = document.getElementById('msg');
 let skyStart = null; // moment the camera clears the treetops
+// the highest leaf in the wood: once the upward-looking camera is above it, no leaf is in view
+let LEAF_TOP = 0;
+for (let i = 1; i < leaves.pos.length; i += 3) LEAF_TOP = Math.max(LEAF_TOP, leaves.pos[i]);
+LEAF_TOP += 1;
+let clearT = null;   // moment the last leaf left the frame
+const WASH_DELAY = 1.0, WASH_S = 0.6;
 function say(html) {
   if (!html) { msg.classList.remove('show'); return; }
   msg.innerHTML = html;
@@ -727,6 +733,7 @@ function launch() {
 function land() {
   flight = null;
   skyStart = null;
+  clearT = null;
   inkFor(0);
   say(null);
   for (const { sp, base } of puffs) sp.material.opacity = base;
@@ -740,8 +747,104 @@ function land() {
   });
 }
 
-addEventListener('pointerdown', (e) => { if (e.button === 0) launch(); });
-addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
+addEventListener('pointerdown', (e) => { if (e.button === 0) { startMusic(); launch(); } });
+addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startMusic(); launch(); }
+  if (e.key === 'm' || e.key === 'M') toggleMute();
+});
+
+// ---- music ------------------------------------------------------------------
+// Browsers only allow sound after a user gesture, so music starts on the first
+// click or key press and then never stops: it loops through every flight.
+// To use your own track, put the file next to this page and set MUSIC_FILE to
+// its name (for example 'music.mp3'); it is looped instead. Left empty, a quiet
+// generated piece plays: a slow D-minor pad with sparse plucked notes and a
+// long echo. Press M to mute.
+const MUSIC_FILE = '';
+let music = null;
+function startMusic() {
+  if (music) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = AC ? new AC() : null; // created inside the gesture so it is allowed to run
+  music = { ctx, el: null, master: null, muted: false };
+  if (!MUSIC_FILE) { if (ctx) generated(ctx); return; }
+  const el = new Audio(MUSIC_FILE);
+  el.loop = true;
+  el.volume = 0.6;
+  el.play().then(() => { music.el = el; if (ctx) ctx.close(); music.ctx = null; })
+    .catch(() => { if (ctx) generated(ctx); }); // file missing or blocked: fall back
+}
+function toggleMute() {
+  if (!music) return;
+  music.muted = !music.muted;
+  if (music.el) music.el.muted = music.muted;
+  if (music.master) music.master.gain.setTargetAtTime(music.muted ? 0 : 0.5, music.ctx.currentTime, 0.2);
+}
+function generated(ctx) {
+  ctx.resume();
+  const master = ctx.createGain();
+  master.gain.value = 0;
+  master.gain.setTargetAtTime(0.5, ctx.currentTime, 1.5);
+  const comp = ctx.createDynamicsCompressor();
+  master.connect(comp).connect(ctx.destination);
+  music.master = master;
+  // long soft echo
+  const delay = ctx.createDelay(1.5); delay.delayTime.value = 0.46;
+  const fb = ctx.createGain(); fb.gain.value = 0.42;
+  const damp = ctx.createBiquadFilter(); damp.type = 'lowpass'; damp.frequency.value = 1800;
+  delay.connect(damp).connect(fb).connect(delay);
+  delay.connect(master);
+  const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+  // Dm, Bb, F, C: one chord every 10 seconds, voiced low
+  const CHORDS = [[50, 57, 65, 69], [46, 53, 62, 65], [53, 60, 65, 69], [48, 55, 64, 67]];
+  const SCALE = [62, 65, 67, 69, 72, 74, 77, 79]; // D minor pentatonic
+  function pad(notes, at, len) {
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(0.11, at + 3.5);
+    g.gain.setValueAtTime(0.11, at + len - 1);
+    g.gain.linearRampToValueAtTime(0, at + len + 4);
+    f.connect(g).connect(master);
+    for (const n of notes) for (const det of [-5, 5]) {
+      const o = ctx.createOscillator();
+      o.type = det < 0 ? 'triangle' : 'sine';
+      o.frequency.value = hz(n);
+      o.detune.value = det;
+      o.connect(f);
+      o.start(at);
+      o.stop(at + len + 4.2);
+    }
+  }
+  function pluck(n, at, vel) {
+    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = hz(n);
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass';
+    f.frequency.setValueAtTime(2600, at);
+    f.frequency.exponentialRampToValueAtTime(500, at + 1.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vel, at + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 2.4);
+    o.connect(f).connect(g);
+    g.connect(master);
+    g.connect(delay);
+    o.start(at);
+    o.stop(at + 2.5);
+  }
+  // look-ahead scheduler, so timing survives a throttled background tab
+  let nextChord = ctx.currentTime + 0.1, chordI = 0, nextPluck = ctx.currentTime + 2, last = 3;
+  setInterval(() => {
+    const horizon = ctx.currentTime + 2.5;
+    while (nextChord < horizon) { pad(CHORDS[chordI++ % CHORDS.length], nextChord, 10); nextChord += 10; }
+    while (nextPluck < horizon) {
+      // wander stepwise through the scale, like leaves coming down one at a time
+      last = Math.max(0, Math.min(SCALE.length - 1, last + Math.floor(Math.random() * 5) - 2));
+      pluck(SCALE[last], nextPluck, 0.1 + Math.random() * 0.08);
+      if (Math.random() < 0.25) pluck(SCALE[last] - 12, nextPluck + 0.02, 0.07);
+      nextPluck += [0.75, 1.5, 1.5, 2.25, 3][Math.floor(Math.random() * 5)];
+    }
+  }, 500);
+}
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -810,8 +913,11 @@ function frame() {
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
     camera.updateProjectionMatrix();
-    sky.material.uniforms.uLift.value = Math.min(1, Math.max(0, (u - 0.84) / 0.09)); // quick wash: ~0.6s
-    inkFor(sstep(0.82, 0.87, u)); // text goes dark just ahead of the wash so it never matches the sky
+    // blue holds until a second after the last leaf has left the frame, then a quick wash
+    if (clearT === null && camera.position.y > LEAF_TOP) clearT = t;
+    const wash = clearT === null ? -1 : t - clearT - WASH_DELAY; // seconds into the wash
+    sky.material.uniforms.uLift.value = Math.min(1, Math.max(0, wash / WASH_S));
+    inkFor(clearT === null ? 0 : sstep(-0.2, 0.12, wash)); // text goes dark just ahead of the wash
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
@@ -820,8 +926,9 @@ function frame() {
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
-    if (u > 0.9) flash.classList.add('on');
-    if (u >= 1 && el > FLIGHT_S + 0.8) land();
+    if (wash > WASH_S * 0.6) flash.classList.add('on');
+    // hold the white with the words on it for a moment, then return
+    if (wash > WASH_S + 1.6 || el > FLIGHT_S + 0.8) land();
   } else if (!reduceMotion) {
     // lying still: a breath of drift
     lookNow.x = Math.sin(t * 0.23) * 0.05;
