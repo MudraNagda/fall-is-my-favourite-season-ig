@@ -711,8 +711,7 @@ function inkFor(white) {
   msg.style.color = `rgba(${c}, ${c}, ${c}, 0.75)`;
 }
 say('click to soar');
-const look = { x: 0, y: 0 };     // pointer parallax target
-const lookNow = { x: 0, y: 0 };
+const lookNow = { x: 0, y: 0 };  // tiny idle drift of the gaze; no pointer parallax
 let flight = null;               // { start: seconds }
 const FLIGHT_S = reduceMotion ? 4.6 : 6.4;
 const SKY_AT = 31; // ~90% of tree height: the second line of text appears here
@@ -744,10 +743,6 @@ function land() {
 
 addEventListener('pointerdown', (e) => { if (e.button === 0) launch(); });
 addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
-addEventListener('pointermove', (e) => {
-  look.x = (e.clientX / innerWidth - 0.5) * 2;
-  look.y = (e.clientY / innerHeight - 0.5) * 2;
-});
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -806,11 +801,6 @@ function frame() {
   leafMat.uniforms.uTime.value = t;
   if (!reduceMotion && (grainTick++ & 1) === 0) drawGrain();
 
-  // pointer parallax, eased
-  const k = reduceMotion ? 0.02 : 0.045;
-  lookNow.x += (look.x - lookNow.x) * k;
-  lookNow.y += (look.y - lookNow.y) * k;
-
   let roll = 0;
   if (flight) {
     const el = t - flight.start;
@@ -835,8 +825,8 @@ function frame() {
     if (u >= 1 && el > FLIGHT_S + 0.8) land();
   } else if (!reduceMotion) {
     // lying still: a breath of drift
-    lookNow.x += Math.sin(t * 0.23) * 0.0008;
-    lookNow.y += Math.cos(t * 0.19) * 0.0006;
+    lookNow.x = Math.sin(t * 0.23) * 0.05;
+    lookNow.y = Math.cos(t * 0.19) * 0.04;
   }
 
   const idle = flight ? 0.35 : 1;
