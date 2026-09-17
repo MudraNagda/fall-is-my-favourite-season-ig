@@ -57,7 +57,9 @@
     width: 100%;
     height: 100%;
     opacity: 0.3;
-    mix-blend-mode: overlay;
+    /* hard-light, not overlay: overlay does nothing over white, hard-light still
+       lets the dark specks through, so the grain carries onto the wash */
+    mix-blend-mode: hard-light;
   }
   /* lifted blacks and a faded amber cast, like an old colour print */
   .wash {
@@ -87,9 +89,9 @@
   .flash {
     background: #fbfaf4;
     opacity: 0;
-    transition: opacity 0.4s ease;
+    transition: opacity 0.4s ease; /* only the fade back out on replay */
   }
-  .flash.on { opacity: 1; }
+  .flash.on { opacity: 1; transition: none; } /* while flying, its radial gradient is driven per frame */
   /* one line of guidance in the centre of the sky */
   .msg {
     position: fixed;
@@ -188,13 +190,13 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
-<canvas class="grain" id="grain"></canvas>
 <div class="wash"></div>
 <div class="leak"></div>
 <div class="vignette"></div>
 <div class="flash" id="flash"></div>
 <p class="msg" id="msg"></p>
 <canvas class="leaf" id="leaf"></canvas>
+<canvas class="grain" id="grain"></canvas>
 <button class="replay" id="replay" type="button">replay</button>
 <label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
   <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
@@ -280,7 +282,8 @@ const sky = new THREE.Mesh(
       uGlow: { value: SUN_GLOW },
       uWhite: { value: SKY_WHITE },
       uSun: { value: SUN_DIR },
-      uLift: { value: 0 }, // brightens as the viewer leaves the trees
+      uLift: { value: 0 },  // 0..1, how far the light has opened
+      uReach: { value: 1 }, // angle from the zenith to the corner of the frame
     },
     vertexShader: `
       varying vec3 vDir;
@@ -289,13 +292,18 @@ const sky = new THREE.Mesh(
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `
-      uniform vec3 uZenith, uHorizon, uGlow, uWhite, uSun; uniform float uLift;
+      uniform vec3 uZenith, uHorizon, uGlow, uWhite, uSun; uniform float uLift, uReach;
       varying vec3 vDir;
       void main() {
         float h = clamp(vDir.y, 0.0, 1.0);
         vec3 col = mix(uHorizon, uZenith, pow(h, 0.65));
-        col = mix(col, uGlow, smoothstep(0.0, 0.55, uLift));   // a touch of yellow first
-        col = mix(col, uWhite, smoothstep(0.35, 1.0, uLift));  // then it washes out
+        // the light opens from straight overhead and spreads to the corners with a
+        // very soft edge; each point passes through the faint yellow, then white
+        float r = acos(clamp(vDir.y, -1.0, 1.0)) / uReach;
+        float feather = 0.8;
+        float local = smoothstep(0.0, 1.0, (uLift * (1.0 + feather) - r) / feather);
+        col = mix(col, uGlow, smoothstep(0.0, 0.5, local));
+        col = mix(col, uWhite, smoothstep(0.3, 1.0, local));
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -1224,7 +1232,10 @@ function frame() {
     // blue holds until a second after the last leaf has left the frame, then a quick wash
     if (clearT === null && camera.position.y > LEAF_TOP) clearT = t;
     const wash = clearT === null ? -1 : t - clearT - WASH_DELAY; // seconds into the wash
-    sky.material.uniforms.uLift.value = Math.min(1, Math.max(0, wash / WASH_S));
+    // same duration as before, but eased out and opened radially instead of all at once
+    const easeOut = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+    sky.material.uniforms.uLift.value = easeOut(wash / WASH_S);
+    sky.material.uniforms.uReach.value = Math.atan(Math.tan((camera.fov * Math.PI) / 360) * Math.hypot(1, camera.aspect));
     inkFor(clearT === null ? 0 : sstep(-0.2, 0.12, wash)); // text goes dark just ahead of the wash
     if (u > 0.5) vignette.classList.add('lift');
     if (camera.position.y >= SKY_AT && skyStart === null) {
@@ -1234,7 +1245,13 @@ function frame() {
     // each puff fades out as it passes right through the lens, so a cloud reads
     // as wisps streaming past rather than a white wall
     for (const { sp, base } of puffs) sp.material.opacity = base * sstep(0.4, 4.5, sp.position.distanceTo(camera.position));
-    if (wash > WASH_S * 0.6) flash.classList.add('on');
+    // the white layer follows a beat behind as a soft-edged disc, so the warm ring leads it
+    if (wash >= 0) {
+      const p = easeOut((wash - 0.1) / WASH_S), F = 80;
+      const outer = p * (100 + F), inner = outer - F;
+      flash.style.background = `radial-gradient(circle farthest-corner at 50% 50%, rgba(251,250,244,1) ${inner.toFixed(1)}%, rgba(251,250,244,0) ${outer.toFixed(1)}%)`;
+      flash.classList.add('on');
+    }
     // no return on its own: the white holds with the words on it until replay is pressed
     if (wash > WASH_S + 0.6 || el > FLIGHT_S + 0.8) replay.classList.add('show');
   } else {
