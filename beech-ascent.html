@@ -117,7 +117,7 @@
   }
   .replay.show { opacity: 1; pointer-events: auto; }
   .replay:focus-visible, .zoom input:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
-  /* zoom: a hairline on the right edge with four stops */
+  /* camera height: a hairline on the right edge with snapped stops */
   .zoom {
     position: fixed;
     right: 14px;
@@ -141,6 +141,8 @@
     text-align: right;
     opacity: 0.8;
   }
+  .zoom.off { opacity: 0.35; pointer-events: none; }
+  .zoom { transition: opacity 0.4s ease; }
   .zoom input {
     -webkit-appearance: none;
     appearance: none;
@@ -183,9 +185,9 @@
 <div class="flash" id="flash"></div>
 <p class="msg" id="msg"></p>
 <button class="replay" id="replay" type="button">replay</button>
-<label class="zoom" id="zoom" aria-label="Camera zoom">
-  <ol aria-hidden="true"><li>120</li><li>100</li><li>10</li><li>5</li></ol>
-  <input id="zoomRange" type="range" min="0" max="3" step="1" value="2" aria-valuetext="100%">
+<label class="zoom" id="zoom" aria-label="Camera height, as a percentage of tree height">
+  <ol aria-hidden="true"><li>120</li><li>100</li><li>10</li><li>5</li><li>0</li></ol>
+  <input id="zoomRange" type="range" min="0" max="4" step="1" value="0" aria-valuetext="0%">
 </label>
 
 <script type="module">
@@ -797,13 +799,16 @@ function inkFor(white) {
   document.documentElement.style.setProperty('--ui', `rgba(${c}, ${c}, ${c}, 0.75)`);
 }
 
-// zoom: four snapped lens settings, eased between in log space
-const ZOOMS = [0.05, 0.1, 1, 1.2];
+// camera height slider: 0% is where the scene starts, 100% is the top of the
+// trees. Snapped stops, eased between while the viewer is at rest.
+const STOPS = [0, 0.05, 0.1, 1, 1.2];
+const zoomBox = document.getElementById('zoom');
 const zoomRange = document.getElementById('zoomRange');
-let zoomGoal = 1;
+let heightPct = 0;
+const heightFor = (pct) => GROUND_Y + pct * (LEAF_TOP - 1 - GROUND_Y);
 zoomRange.addEventListener('input', () => {
-  zoomGoal = ZOOMS[Number(zoomRange.value)];
-  zoomRange.setAttribute('aria-valuetext', `${Math.round(zoomGoal * 100)}%`);
+  heightPct = STOPS[Number(zoomRange.value)];
+  zoomRange.setAttribute('aria-valuetext', `${Math.round(heightPct * 100)}%`);
 });
 const replay = document.getElementById('replay');
 // controls must not start a flight
@@ -823,7 +828,8 @@ const ease = (t) => Math.pow(t, 2.4);
 
 function launch() {
   if (flight) return;
-  flight = { start: clock.getElapsedTime() };
+  flight = { start: clock.getElapsedTime(), from: camera.position.y };
+  zoomBox.classList.add('off');
   say(null);
 }
 function land() {
@@ -834,7 +840,8 @@ function land() {
   inkFor(0);
   say(null);
   for (const { sp, base } of puffs) sp.material.opacity = base;
-  camera.position.set(0, GROUND_Y, 0);
+  camera.position.set(0, heightFor(heightPct), 0);
+  zoomBox.classList.remove('off');
   camera.fov = 96;
   camera.updateProjectionMatrix();
   sky.material.uniforms.uLift.value = 0;
@@ -1005,7 +1012,7 @@ function frame() {
     const el = t - flight.start;
     const u = Math.min(1, el / FLIGHT_S);
     const e = ease(u);
-    camera.position.y = GROUND_Y + RISE * e;
+    camera.position.y = flight.from + (GROUND_Y + RISE - flight.from) * e;
     roll = reduceMotion ? 0 : u * u * 0.5;             // slow spiral as it climbs
     const baseFov = innerWidth > innerHeight ? 96 : 108;
     camera.fov = baseFov - 22 * Math.pow(u, 1.6);      // tightening toward the sky
@@ -1026,7 +1033,12 @@ function frame() {
     if (wash > WASH_S * 0.6) flash.classList.add('on');
     // no return on its own: the white holds with the words on it until replay is pressed
     if (wash > WASH_S + 0.6 || el > FLIGHT_S + 0.8) replay.classList.add('show');
-  } else if (!reduceMotion) {
+  } else {
+    // at rest the slider sets how far up the trunks the viewer floats
+    const goalY = heightFor(heightPct);
+    camera.position.y += (goalY - camera.position.y) * (reduceMotion ? 1 : 0.07);
+  }
+  if (!flight && !reduceMotion) {
     // lying still: a breath of drift
     lookNow.x = Math.sin(t * 0.23) * 0.05;
     lookNow.y = Math.cos(t * 0.19) * 0.04;
@@ -1037,10 +1049,6 @@ function frame() {
   target.copy(camera.position).add(dirV);
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
-  if (Math.abs(camera.zoom - zoomGoal) > 0.0005) {
-    camera.zoom = Math.exp(Math.log(camera.zoom) + (Math.log(zoomGoal) - Math.log(camera.zoom)) * (reduceMotion ? 1 : 0.12));
-    camera.updateProjectionMatrix();
-  }
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
