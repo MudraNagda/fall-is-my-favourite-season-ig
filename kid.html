@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>The figure · dials</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #fbfaf4; font-family: 'Inter', system-ui, sans-serif; color: #02387A; }
+  body.sky { background: #2c64c0; color: #fff; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .cap { position: fixed; left: 0; right: 0; bottom: 18px; margin: 0; text-align: center; font: italic 400 15px/1.4 'Instrument Serif', Georgia, serif; opacity: 0.7; pointer-events: none; }
+  .dk { position: fixed; top: 14px; left: 14px; z-index: 60; width: 272px; max-height: calc(100vh - 28px); overflow: auto; overscroll-behavior: contain;
+    background: rgba(22, 22, 24, 0.92); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: #f2f2f2; border-radius: 16px; padding: 8px;
+    font: 500 12px/1 'Inter', system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); cursor: default; user-select: none; -webkit-user-select: none; }
+  .dk * { box-sizing: border-box; }
+  .dk-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 10px; font-weight: 600; letter-spacing: 0.01em; }
+  .dk-head button { all: unset; cursor: pointer; opacity: 0.6; padding: 4px 6px; border-radius: 6px; }
+  .dk-head button:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+  .dk-group { margin-top: 4px; }
+  .dk-group > summary { list-style: none; cursor: pointer; padding: 9px 8px; border-radius: 9px; font-weight: 600; opacity: 0.85; display: flex; justify-content: space-between; }
+  .dk-group > summary::-webkit-details-marker { display: none; }
+  .dk-group > summary::after { content: '+'; opacity: 0.5; }
+  .dk-group[open] > summary::after { content: '−'; }
+  .dk-group > summary:hover { background: rgba(255, 255, 255, 0.06); }
+  .dk-row { position: relative; height: 34px; margin: 4px 0; border-radius: 9px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+  .dk-fill { position: absolute; inset: 0 auto 0 0; background: rgba(255, 255, 255, 0.13); pointer-events: none; }
+  .dk-row:hover .dk-fill { background: rgba(255, 255, 255, 0.19); }
+  .dk-label, .dk-val { position: absolute; top: 0; height: 34px; line-height: 34px; pointer-events: none; }
+  .dk-label { left: 11px; opacity: 0.78; }
+  .dk-val { right: 11px; font-variant-numeric: tabular-nums; }
+  .dk-row input, .dk-row select { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; font: inherit; }
+  .dk-row input[type=range] { cursor: ew-resize; }
+  .dk-chip { position: absolute; right: 74px; top: 9px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.4); pointer-events: none; }
+  .dk-row:focus-within { outline: 1px solid rgba(255, 255, 255, 0.5); }
+  .dk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px; }
+  .dk-actions button { all: unset; text-align: center; height: 34px; line-height: 34px; border-radius: 9px; background: rgba(255, 255, 255, 0.1); cursor: pointer; font-weight: 600; }
+  .dk-actions button:hover { background: rgba(255, 255, 255, 0.2); }
+  .dk.min .dk-body { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<p class="cap">running, jumping, peeking: the three ways she appears in the footer</p>
+<script type="module">
+// The same drawing code as the landing page (index.html), with a dial for every
+// value. "copy" puts the values on the clipboard as JSON, to be pasted back as the
+// new defaults; they are also kept in this browser, and index.html#dials uses them.
+// ---- the figure ---------------------------------------------------------------------
+// Everything about her is a number, a switch or a colour in K, so she can be tuned
+// on her own page (kid.html, a dial panel) and the copied values pasted back here.
+const KID_DEFAULTS = {
+  head: 22, bodyW: 19, bodyH: 1.5, legLen: 11, legW: 5, boot: 4.5, armLen: 9, armW: 5, hand: 3, lean: 0.18,
+  curl: 3, volume: 1.09, bob: 0.8, back: 0.5, bounce: 1, fringe: true,
+  eye: 1.3, blushAmount: 0.46, glasses: true, glassSize: 5.5, glassLine: 1.1,
+  scarfOn: true, scarfLen: 1.55,
+  top: '#991700', trousers: '#15046c', boots: '#2a1d14', scarf: '#bf3100',
+  skin: '#eebb93', hair: '#5b3519', specs: '#2f5d3e', blush: '#f0788c', ink: '#2a1d14',
+};
+const K = { ...KID_DEFAULTS };
+const hexCh = (hex, s) => (parseInt(hex.slice(1), 16) >> s) & 255;
+const shadeHex = (hex, f) => `rgb(${[16, 8, 0].map((s) => Math.max(0, Math.min(255, Math.round(hexCh(hex, s) * f)))).join(', ')})`;
+const alphaHex = (hex, a) => `rgba(${hexCh(hex, 16)}, ${hexCh(hex, 8)}, ${hexCh(hex, 0)}, ${a})`;
+// A full head of small curls. Wherever hair is wanted, curls are scattered from a
+// fixed seed (so they hold still from frame to frame) in three shades, and rows of
+// them are laid along every edge, so the mass never shows a straight line.
+function curlTone(i) { return i % 3 === 1 ? shadeHex(K.hair, 1.22) : i % 3 === 2 ? shadeHex(K.hair, 0.82) : K.hair; }
+function curlRow(c, x0, y0, x1, y1, r) {
+  const n = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) / (r * 1.15)));
+  for (let i = 0; i <= n; i++) {
+    c.fillStyle = curlTone(i + 1);
+    c.beginPath(); c.arc(x0 + ((x1 - x0) * i) / n + ((i * 5) % 3 - 1) * r * 0.25, y0 + ((y1 - y0) * i) / n + ((i * 7) % 3 - 1) * r * 0.3, r * (0.9 + ((i * 3) % 4) * 0.08), 0, Math.PI * 2); c.fill();
+  }
+}
+function curlScatter(c, inside, seed) {
+  let sd = seed;
+  const rnd = () => { sd = (sd + 0x6D2B79F5) | 0; let k = Math.imul(sd ^ (sd >>> 15), 1 | sd); k = (k + Math.imul(k ^ (k >>> 7), 61 | k)) ^ k; return ((k ^ (k >>> 14)) >>> 0) / 4294967296; };
+  const n = Math.round(Math.min(260, 1500 / (K.curl * K.curl)));
+  for (let i = 0; i < n; i++) {
+    const x = (rnd() * 2 - 1) * 20 * K.volume, y = (rnd() * 2 - 1) * 20 * K.volume, r = K.curl * (0.75 + rnd() * 0.5);
+    if (!inside(x, y)) continue;
+    c.fillStyle = curlTone(i);
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  }
+}
+// a ring of overlapping curls round the outline
+function curls(c, cx, cy, from, to, rad) {
+  const n = Math.max(3, Math.round(((to - from) / 3.6) * 11 * (6.2 / K.curl)));
+  for (let i = 0; i < n; i++) {
+    const a = from + ((to - from) * i) / (n - 1);
+    const out = rad + (i % 2 ? 1.5 : -0.5), r = K.curl + ((i * 7) % 3) * 0.7;
+    c.fillStyle = curlTone(i);
+    c.beginPath(); c.arc(cx + Math.cos(a) * out, cy + Math.sin(a) * out, r, 0, Math.PI * 2); c.fill();
+  }
+}
+// side view, facing right; origin at the feet. pose is 'run' or 'jump'
+function drawKid(c, x, y, k, pose, ph, sy) {
+  c.save();
+  c.translate(x, y);
+  c.scale(k, k * sy);
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  const air = pose === 'jump';
+  const hip = -K.legLen, seg = K.legLen / 2, arm = K.armLen / 2;
+  const bodyTop = 7 + K.bodyH + K.bodyW / 2, shoulder = -(7 + K.bodyH + K.bodyW * 0.13);
+  const limb = (ox, oy, a, bend, l1, l2, w, col, hand) => {
+    const kx = ox + Math.sin(a) * l1, ky = oy + Math.cos(a) * l1;
+    const fx = kx + Math.sin(a + bend) * l2, fy = ky + Math.cos(a + bend) * l2;
+    c.strokeStyle = col; c.lineWidth = w;
+    c.beginPath(); c.moveTo(ox, oy); c.lineTo(kx, ky); c.lineTo(fx, fy); c.stroke();
+    if (hand) { c.fillStyle = K.skin; c.beginPath(); c.arc(fx, fy, K.hand, 0, Math.PI * 2); c.fill(); }
+    else { c.strokeStyle = hand === false ? shadeHex(K.boots, 0.7) : K.boots; c.lineWidth = w + 1; c.beginPath(); c.moveTo(fx, fy); c.lineTo(fx + K.boot, fy); c.stroke(); }
+  };
+  const legA = (p) => Math.sin(p) * 0.85, legB = (p) => -(0.25 + 0.95 * Math.max(0, Math.cos(p)));
+  // far leg, far arm
+  if (air) limb(0, hip, 0.35, -1.25, seg, seg, K.legW, shadeHex(K.trousers, 0.7), false); else limb(0, hip, legA(ph + Math.PI), legB(ph + Math.PI), seg, seg, K.legW, shadeHex(K.trousers, 0.7), false);
+  c.save();
+  c.translate(0, hip);
+  c.rotate(air ? -0.12 : K.lean);                          // leaning into the run
+  if (air) limb(0, shoulder, 2.75, 0.2, arm, arm * 0.9, K.armW, shadeHex(K.top, 0.82), true); else limb(0, shoulder, Math.sin(ph) * 0.9, 1.1, arm, arm * 0.9, K.armW, shadeHex(K.top, 0.82), true);
+  c.restore();
+  // near leg
+  if (air) limb(0, hip, 0.95, -1.5, seg, seg, K.legW, K.trousers); else limb(0, hip, legA(ph), legB(ph), seg, seg, K.legW, K.trousers);
+  c.save();
+  c.translate(0, hip);
+  c.rotate(air ? -0.12 : K.lean);
+  // cartoon proportions: a round little body, stubby limbs, and a big head
+  c.strokeStyle = K.top; c.lineWidth = K.bodyW;             // jumper, round as a bean
+  c.beginPath(); c.moveTo(0, -7); c.lineTo(0, -7 - Math.max(0.01, K.bodyH)); c.stroke();
+  if (K.scarfOn) {
+    // scarf, its tail streaming out behind
+    const sy0 = -bodyTop + 1, L = K.scarfLen;
+    c.strokeStyle = K.scarf; c.lineWidth = 6;
+    c.beginPath(); c.moveTo(-5, sy0); c.quadraticCurveTo(-5 - 11 * L, sy0 - 4 + Math.sin(ph * 1.3) * 3, -5 - 23 * L, sy0 + (air ? -10 : 3) * L + Math.sin(ph) * 5); c.stroke();
+    c.lineWidth = 7; c.beginPath(); c.moveTo(-9, sy0); c.lineTo(10, sy0 + 1); c.stroke();
+  }
+  // the head, drawn in its own units (a radius of 14) and scaled to K.head
+  c.save();
+  c.translate(3, -(bodyTop + K.head * 0.9)); c.scale(K.head / 14, K.head / 14);
+  c.fillStyle = K.skin; c.beginPath(); c.arc(0, 0, 14, 0, Math.PI * 2); c.fill();
+  // the arm of the glasses runs back level and disappears under the hair
+  if (K.glasses) { c.strokeStyle = K.specs; c.lineWidth = K.glassLine; c.beginPath(); c.moveTo(7.5 - K.glassSize * 0.62, -1.4); c.lineTo(-2, -1.8); c.stroke(); }
+  // hair: a mop over the crown and down the back to the jaw, a heavy fringe coming
+  // forward over the brow, and the side falling in front of the ear
+  const from = 1.95 + Math.max(0, 1 - K.bob) * 1.1, vol = K.volume;
+  const ax = Math.cos(from) * 14.5, ay = Math.sin(from) * 14.5, fx = Math.cos(5.62) * 14.5, fy = Math.sin(5.62) * 14.5;
+  // running, the whole mop bobs a beat behind her steps and gives a little; in the air it lifts
+  const bob = air ? -1.3 * K.bounce : -(0.5 + 0.5 * Math.cos(ph * 2 - 0.9)) * 1.3 * K.bounce;   // only ever up from rest, so the fringe never drops over her glasses
+  c.save();
+  c.translate(0, bob);
+  // a little more length low at the back of the head, well clear of the neck; it swings the most
+  for (let j = Math.round(K.back * 2) - 1; j >= 0; j--) curls(c, -1 - j * 0.8, bob * 0.6 * (j + 1), from + 0.3, Math.PI + 0.1 - j * 0.12, (14.6 + j * 2.2) * vol);
+  c.fillStyle = K.hair;
+  c.beginPath(); c.arc(0, 0, 14.5, from, 5.62); c.lineTo(3.5, -6.5); c.lineTo(0.5, 3); c.closePath(); c.fill();
+  const inHair = (x, y) => {
+    const r = Math.hypot(x, y); let a = Math.atan2(y, x); if (a < 0) a += Math.PI * 2;
+    if (r > 15.5 * vol || a < from || a > 5.68) return false;
+    return !(x > 0.5 && y > -7 + x * 0.1) && !(x > -1 && y > 3);     // keeps off the face
+  };
+  curlScatter(c, inHair, 7);
+  curls(c, 0, 0, from, 5.6, 13.5 * vol);
+  curlRow(c, fx, fy, 3.5, -6.5, K.curl);                              // the fringe's lower edge, over the brow
+  curlRow(c, 3.5, -6.5, 0.5, 3, K.curl);                              // down in front of the ear
+  curlRow(c, 0.5, 3, ax, ay, K.curl);                                 // and along the jaw to the nape
+  for (let j = 0; K.bob >= 1 && j <= Math.round((K.bob - 1) * 4); j++) curlRow(c, -13 * vol, 9 + j * 5.5, -3, 10 + j * 5.5, K.curl);
+  c.restore();
+  c.fillStyle = alphaHex(K.blush, K.blushAmount); c.beginPath(); c.arc(5, 6, 3, 0, Math.PI * 2); c.fill();
+  // a standing oval for an eye, and the lens an upright oval too: seen from the side it is narrowed
+  c.fillStyle = K.ink; c.beginPath(); c.ellipse(7.5, -1, K.eye * 0.72, K.eye * 1.3, 0, 0, Math.PI * 2); c.fill();
+  if (K.glasses) { c.strokeStyle = K.specs; c.lineWidth = K.glassLine; c.beginPath(); c.ellipse(7.5, -1, K.glassSize * 0.62, K.glassSize, 0, 0, Math.PI * 2); c.moveTo(7.5 + K.glassSize * 0.62, -2); c.quadraticCurveTo(7.5 + K.glassSize * 0.62 + 1.4, -3.2, 7.5 + K.glassSize * 0.62 + 2.6, -2.2); c.stroke(); }
+  if (air) { c.fillStyle = K.ink; c.beginPath(); c.ellipse(8, 6.5, 2.6, 3.2, 0, 0, Math.PI * 2); c.fill(); }
+  else { c.strokeStyle = K.ink; c.lineWidth = 1.5; c.beginPath(); c.arc(6.5, 4, 4, 0.25, 1.7); c.stroke(); }
+  c.restore();
+  // near arm
+  if (air) limb(0, shoulder, 2.45, 0.25, arm, arm * 0.9, K.armW, K.top, true); else limb(0, shoulder, -Math.sin(ph) * 0.9, 1.1, arm, arm * 0.9, K.armW, K.top, true);
+  c.restore();
+  c.restore();
+}
+// facing us, just the head, for peeking out of the leaves
+function drawPeek(c, x, y, k, blink) {
+  c.save();
+  c.translate(x, y);
+  c.scale((k * K.head) / 14, (k * K.head) / 14);
+  const reach = 0.95 * Math.min(1, K.bob), vol = K.volume;
+  // behind the face: the mass at the sides, down to the jaw (or further, for a longer bob)
+  const low = Math.sin(reach) * 15.5 + Math.max(0, K.bob - 1) * 22;
+  curlScatter(c, (x, y) => Math.hypot(x, y * 0.92) < 17 * vol && Math.hypot(x, y) > 9 && y < low, 11);
+  curls(c, 0, 0, Math.PI - reach, Math.PI * 2 + reach, 15.5 * vol);
+  for (const sx of [-1, 1]) for (let j = 0; K.bob > 1 && j <= Math.round((K.bob - 1) * 4); j++) curlRow(c, sx * 16 * vol, 12 + j * 5.5, sx * 10, 12 + j * 5.5, K.curl);
+  c.fillStyle = K.skin; c.beginPath(); c.arc(0, 0, 15, 0, Math.PI * 2); c.fill();
+  // over the face: the crown, and a heavy curly fringe down to the brows
+  c.fillStyle = K.hair; c.beginPath(); c.arc(0, 0, 15.6, Math.PI + 0.62, Math.PI * 2 - 0.62); c.closePath(); c.fill();
+  curlScatter(c, (x, y) => Math.hypot(x, y) < 16 * vol && y < (K.fringe ? -6.5 : -10), 23);
+  for (const sx of [-1, 1]) curlRow(c, sx * 15, -7, sx * 13.5, 4, K.curl);          // the sides coming in over the temples
+  if (K.fringe) { curlRow(c, -13, -7.5, 13, -7.5, K.curl); curlRow(c, -11.5, -5.6, 11.5, -5.6, K.curl * 0.9); }
+  else curlRow(c, -11, -10.5, 11, -10.5, K.curl);
+  c.fillStyle = alphaHex(K.blush, K.blushAmount);
+  for (const sx of [-1, 1]) { c.beginPath(); c.arc(sx * 9.5, 6.5, 3, 0, Math.PI * 2); c.fill(); }
+  c.fillStyle = K.ink; c.strokeStyle = K.ink; c.lineWidth = 1.6; c.lineCap = 'round';
+  for (const sx of [-1, 1]) {
+    c.beginPath();
+    if (blink) { c.moveTo(sx * 6 - 2, 1); c.lineTo(sx * 6 + 2, 1); c.stroke(); }
+    else { c.ellipse(sx * 6, 0.5, K.eye * 0.78, K.eye * 1.35, 0, 0, Math.PI * 2); c.fill(); }   // standing ovals
+  }
+  if (K.glasses) {
+    c.strokeStyle = K.specs; c.lineWidth = K.glassLine;
+    const g = K.glassSize + 0.2, gx = Math.max(6, g + 1.3);   // always room for the bridge over the nose
+    c.beginPath();
+    for (const sx of [-1, 1]) { c.moveTo(sx * gx + g, 0.5); c.arc(sx * gx, 0.5, g, 0, Math.PI * 2); }
+    c.moveTo(-gx + g, -0.3); c.quadraticCurveTo(0, -2.2, gx - g, -0.3);
+    c.stroke();
+  }
+  c.restore();
+}
+const VIEW = { pose: 'all three', zoom: 3, speed: 1, backdrop: 'paper' };
+try { Object.assign(K, JSON.parse(localStorage.getItem('fall-kid') || '{}')); } catch (e) { /* storage blocked */ }
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+function size() { const d = Math.min(devicePixelRatio || 1, 2); cv.width = innerWidth * d; cv.height = innerHeight * d; ctx.setTransform(d, 0, 0, d, 0, 0); }
+addEventListener('resize', size); size();
+let ph = 0, last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  ph += dt * 15 * VIEW.speed;
+  const W = innerWidth, H = innerHeight, z = VIEW.zoom;
+  document.body.classList.toggle('sky', VIEW.backdrop === 'sky');
+  ctx.clearRect(0, 0, W, H);
+  const left = Math.min(300, W * 0.25);                       // keep clear of the panel
+  const ground = H * 0.72;
+  ctx.strokeStyle = VIEW.backdrop === 'sky' ? 'rgba(255, 255, 255, 0.35)' : 'rgba(2, 56, 122, 0.2)';
+  ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(left, ground + 0.5); ctx.lineTo(W, ground + 0.5); ctx.stroke();
+  const poses = VIEW.pose === 'all three' ? ['run', 'jump', 'peek'] : [VIEW.pose];
+  poses.forEach((pose, i) => {
+    const x = left + ((W - left) * (i + 0.5)) / poses.length;
+    if (pose === 'run') drawKid(ctx, x, ground - Math.abs(Math.sin(ph)) * 3 * z, z, 'run', ph, 1);
+    else if (pose === 'jump') drawKid(ctx, x, ground - (30 + Math.sin(now / 600) * 8) * z, z, 'jump', ph * 0.6, 1);
+    else {
+      const hy = ground - K.head * z * 0.45 + Math.sin(now / 700) * 1.2 * z;
+      ctx.save(); ctx.beginPath(); ctx.rect(x - 400, 0, 800, ground); ctx.clip();   // up to her cheeks, as in the pile
+      drawPeek(ctx, x, hy, z, (now / 1000) % 3.7 < 0.13);
+      ctx.restore();
+    }
+  });
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- the panel ----------------------------------------------------------------------
+const GROUPS = [
+  ['View', VIEW, [
+    ['pose', 'pose', ['all three', 'run', 'jump', 'peek']],
+    ['zoom', 'zoom', 1, 6, 0.1],
+    ['speed', 'run speed', 0, 2, 0.05],
+    ['backdrop', 'backdrop', ['paper', 'sky']],
+  ]],
+  ['Dimensions', K, [
+    ['head', 'head size', 8, 32, 0.5],
+    ['bodyW', 'body width', 10, 50, 0.5],
+    ['bodyH', 'body length', 0, 40, 0.5],
+    ['legLen', 'leg length', 6, 50, 0.5],
+    ['legW', 'leg thickness', 3, 18, 0.5],
+    ['boot', 'boot length', 0, 14, 0.5],
+    ['armLen', 'arm length', 6, 40, 0.5],
+    ['armW', 'arm thickness', 3, 14, 0.5],
+    ['hand', 'hand size', 1, 8, 0.1],
+    ['lean', 'lean into run', -0.2, 0.6, 0.01],
+  ]],
+  ['Hair', K, [
+    ['curl', 'curl size', 3, 10, 0.1],
+    ['volume', 'volume', 0.8, 1.5, 0.01],
+    ['bob', 'length', 0.4, 2.5, 0.05],
+    ['back', 'length at the back', 0, 3, 0.5],
+    ['bounce', 'bounce when running', 0, 3, 0.05],
+    ['fringe', 'fringe'],
+    ['hair', 'colour', 'color'],
+  ]],
+  ['Face', K, [
+    ['skin', 'skin', 'color'],
+    ['eye', 'eye size', 0.8, 3.5, 0.1],
+    ['blushAmount', 'blush', 0, 1, 0.01],
+    ['blush', 'blush colour', 'color'],
+    ['glasses', 'glasses'],
+    ['glassSize', 'glasses size', 3, 8, 0.1],
+    ['glassLine', 'glasses line', 0.5, 4, 0.1],
+    ['specs', 'glasses colour', 'color'],
+    ['ink', 'eyes and mouth', 'color'],
+  ]],
+  ['Clothes', K, [
+    ['top', 'top', 'color'],
+    ['trousers', 'trousers', 'color'],
+    ['boots', 'boots', 'color'],
+    ['scarfOn', 'scarf'],
+    ['scarf', 'scarf colour', 'color'],
+    ['scarfLen', 'scarf length', 0.3, 2.5, 0.05],
+  ]],
+];
+const panel = document.createElement('div');
+panel.className = 'dk';
+panel.innerHTML = '<div class="dk-head"><span>The figure</span><button type="button" data-min>hide</button></div><div class="dk-body"></div>';
+const body = panel.querySelector('.dk-body');
+const refreshers = [];
+const save = () => { try { localStorage.setItem('fall-kid', JSON.stringify(K)); } catch (e) { /* ignore */ } };
+const places = (step) => (String(step).split('.')[1] || '').length;
+GROUPS.forEach(([title, obj, rows], gi) => {
+  const group = document.createElement('details');
+  group.className = 'dk-group';
+  group.open = gi < 3;
+  group.innerHTML = `<summary>${title}</summary>`;
+  for (const [key, label, a, b, step] of rows) {
+    const row = document.createElement('div');
+    row.className = 'dk-row';
+    let show;
+    if (Array.isArray(a)) {
+      row.innerHTML = `<span class="dk-label">${label}</span><span class="dk-val"></span><select aria-label="${label}">${a.map((o) => `<option>${o}</option>`).join('')}</select>`;
+      const sel = row.querySelector('select'), val = row.querySelector('.dk-val');
+      show = () => { sel.value = obj[key]; val.textContent = obj[key]; };
+      sel.addEventListener('change', () => { obj[key] = sel.value; show(); });
+    } else if (a === 'color') {
+      row.innerHTML = `<span class="dk-label">${label}</span><span class="dk-chip"></span><span class="dk-val"></span><input type="color" aria-label="${label}">`;
+      const input = row.querySelector('input'), val = row.querySelector('.dk-val'), chip = row.querySelector('.dk-chip');
+      show = () => { input.value = obj[key]; val.textContent = obj[key]; chip.style.background = obj[key]; };
+      input.addEventListener('input', () => { obj[key] = input.value; show(); save(); });
+    } else if (a === undefined) {
+      row.innerHTML = `<div class="dk-fill"></div><span class="dk-label">${label}</span><span class="dk-val"></span><input type="checkbox" aria-label="${label}">`;
+      const input = row.querySelector('input'), val = row.querySelector('.dk-val'), fill = row.querySelector('.dk-fill');
+      show = () => { input.checked = obj[key]; val.textContent = obj[key] ? 'on' : 'off'; fill.style.width = obj[key] ? '100%' : '0'; };
+      input.addEventListener('change', () => { obj[key] = input.checked; show(); save(); });
+    } else {
+      row.innerHTML = `<div class="dk-fill"></div><span class="dk-label">${label}</span><span class="dk-val"></span><input type="range" min="${a}" max="${b}" step="${step}" aria-label="${label}">`;
+      const input = row.querySelector('input'), val = row.querySelector('.dk-val'), fill = row.querySelector('.dk-fill');
+      show = () => { input.value = obj[key]; val.textContent = Number(obj[key]).toFixed(places(step)); fill.style.width = `${((obj[key] - a) / (b - a)) * 100}%`; };
+      input.addEventListener('input', () => { obj[key] = Number(input.value); show(); if (obj === K) save(); });
+      // double-click a slider to put it back to the shipped value
+      row.addEventListener('dblclick', () => { if (obj === K) { K[key] = KID_DEFAULTS[key]; show(); save(); } });
+    }
+    refreshers.push(show);
+    group.appendChild(row);
+  }
+  body.appendChild(group);
+});
+const actions = document.createElement('div');
+actions.className = 'dk-actions';
+actions.innerHTML = '<button type="button" data-copy>copy</button><button type="button" data-reset>reset</button>';
+body.appendChild(actions);
+actions.querySelector('[data-copy]').addEventListener('click', async (e) => {
+  const text = JSON.stringify(K, null, 2);
+  try { await navigator.clipboard.writeText(text); e.target.textContent = 'copied'; }
+  catch (err) { console.log(text); e.target.textContent = 'in console'; }
+  setTimeout(() => { e.target.textContent = 'copy'; }, 1200);
+});
+actions.querySelector('[data-reset]').addEventListener('click', () => { Object.assign(K, KID_DEFAULTS); try { localStorage.removeItem('fall-kid'); } catch (e) { /* ignore */ } refreshers.forEach((f) => f()); });
+panel.querySelector('[data-min]').addEventListener('click', (e) => { panel.classList.toggle('min'); e.target.textContent = panel.classList.contains('min') ? 'show' : 'hide'; });
+document.body.appendChild(panel);
+refreshers.forEach((f) => f());
+</script>
+</body>
+</html>

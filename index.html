@@ -49,6 +49,7 @@
   .leaf {
     position: fixed;
     inset: 0;
+    z-index: 6;               /* over the white site too: the leaves fall the whole length of the page */
     width: 100%;
     height: 100%;
     pointer-events: none;
@@ -133,6 +134,28 @@
     -webkit-user-select: text;
     user-select: text;
   }
+  #grainWhite { z-index: 7; }  /* the same grain carries on over the site and the leaves */
+  /* placeholder sections: stand-ins until the real projects and case studies arrive */
+  .block {
+    box-sizing: border-box;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 18vh max(24px, 5vw) 10vh;
+  }
+  .block h2 { margin: 0 0 14px; font: italic 400 40px/1.1 'Instrument Serif', Georgia, serif; }
+  .block .lede { margin: 0 0 56px; max-width: 520px; font: 400 15px/1.6 'Inter', system-ui, sans-serif; opacity: 0.8; }
+  .cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 56px 40px; }
+  .cards .thumb { aspect-ratio: 4 / 3; border-radius: 6px; background: rgba(2, 56, 122, 0.07); }
+  .cards h3 { margin: 18px 0 6px; font: 600 14px/1.3 'Inter', system-ui, sans-serif; }
+  .cards p, .cols p { margin: 0; font: 400 14px/1.6 'Inter', system-ui, sans-serif; opacity: 0.75; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px 56px; }
+  /* footer: a raked-up pile of leaves on the ground, and whatever falls onto it */
+  .foot { position: relative; min-height: max(78vh, 460px); overflow: hidden; }
+  .foot canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .footcopy { position: relative; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 14vh max(24px, 5vw) 0; }
+  .footcopy h2 { margin: 0 0 12px; font: italic 400 32px/1.15 'Instrument Serif', Georgia, serif; }
+  .footcopy p { margin: 0 0 6px; font: 400 14px/1.6 'Inter', system-ui, sans-serif; opacity: 0.8; }
+  .footcopy a { color: inherit; }
   /* small cue that the page continues, shown once the flight has landed */
   .scrollcue {
     position: fixed;
@@ -156,7 +179,7 @@
     position: fixed;
     right: 0;
     bottom: 0;
-    z-index: 6;
+    z-index: 8;
     margin: 0;
     padding: 16px 20px;
     border: 0;
@@ -272,7 +295,35 @@
 <div class="track" aria-hidden="true"></div>
 <!-- The rest of the site (projects, case studies) goes here. It sits on the same
      white the sky turns into, and scrolls up over the hero. -->
-<main class="site" id="site"></main>
+<main class="site" id="site">
+  <!-- placeholder content, only here to give the page its length for now -->
+  <section class="block" id="work">
+    <h2>Selected work</h2>
+    <p class="lede">Placeholder. A short line about the kind of problems these projects deal with, and what ties them together.</p>
+    <ol class="cards">
+      <li><div class="thumb"></div><h3>Project title one</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
+      <li><div class="thumb"></div><h3>Project title two</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
+      <li><div class="thumb"></div><h3>Project title three</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
+      <li><div class="thumb"></div><h3>Project title four</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
+    </ol>
+  </section>
+  <section class="block" id="about">
+    <h2>About</h2>
+    <p class="lede">Placeholder. A sentence that says who this is and how they like to work.</p>
+    <div class="cols">
+      <p>Placeholder paragraph. Background, the path from computer science to design, and the kind of teams and products worked on so far. Three or four sentences is plenty here.</p>
+      <p>Placeholder paragraph. What is interesting right now, things noticed on walks, and a line about what to reach out for. Three or four sentences is plenty here too.</p>
+    </div>
+  </section>
+  <footer class="foot" id="foot">
+    <canvas id="pile" aria-hidden="true"></canvas>
+    <div class="footcopy">
+      <h2>Say hello</h2>
+      <p>Placeholder. Email, LinkedIn and a resume link go here.</p>
+      <p>Mudra Nagda, 2026</p>
+    </div>
+  </footer>
+</main>
 
 <script type="module">
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js';
@@ -979,6 +1030,13 @@ function land() {
   scrollcue.classList.remove('show');
   replay.classList.remove('show');
   looseLeaves.length = 0; // the opening never has loose leaves
+  settled.length = 0;
+  burstLeaves.length = 0;
+  tramp.shots.length = 0;
+  tramp.stuck = null;
+  jump.state = 'idle';
+  jump.burst = false;
+  pileCanvas.style.transform = '';
   leavesMade = 0;
   heroDue = false;
   inkFor(0);
@@ -1215,7 +1273,8 @@ resize();
 // ---- loose leaves ---------------------------------------------------------------
 // Painted once as a few sprites, then flown in screen space on an overlay canvas.
 // Each leaf gets a push in some direction, the push gives out, and it sinks
-// slowly in a soft zigzag until it drifts off the bottom. The first one always
+// slowly in a soft zigzag until it drifts off the bottom, or, once the page has
+// been scrolled to its end, lands in the footer. The first one always
 // runs from the middle of the bottom edge toward the middle of the right edge;
 // the rest start in random places with their own variations of the same motion.
 const leafCanvas = document.getElementById('leaf');
@@ -1290,10 +1349,14 @@ function randomLeafColour() {
 const randomLeafSprite = () => leafSprite(Array.from({ length: 2 + Math.floor(Math.random() * 2) }, randomLeafColour));
 const looseLeaves = [];
 let lastT = 0, nextLeafAt = 0, heroDue = false, leavesMade = 0;
-function spawnLeaf(t, hero) {
+function spawnLeaf(t, hero, fromTop) {
   const W = innerWidth, H = innerHeight;
   let from, aim;
-  if (hero) {
+  if (fromTop) {
+    // later leaves simply come down from above the frame, already sinking
+    from = { x: W * (0.04 + Math.random() * 0.92), y: -60 };
+    aim = { x: from.x, y: from.y + 1 };
+  } else if (hero) {
     from = { x: W / 2, y: H + 40 };
     aim = { x: W + 40, y: H / 2 };
   } else {
@@ -1308,10 +1371,11 @@ function spawnLeaf(t, hero) {
   const total = Math.hypot(aim.x - from.x, aim.y - from.y);
   looseLeaves.push({
     x: from.x, y: from.y, from, total,
-    push: { x: (aim.x - from.x) / T, y: (aim.y - from.y) / T },
-    vx: (aim.x - from.x) / T, vy: (aim.y - from.y) / T,
+    push: fromTop ? { x: 0, y: 0 } : { x: (aim.x - from.x) / T, y: (aim.y - from.y) / T },
+    vx: fromTop ? 0 : (aim.x - from.x) / T, vy: fromTop ? 12 : (aim.y - from.y) / T,
     giveOut: hero ? 0.4 : 0.2 + Math.random() * 0.55,      // fraction of the way before the push dies
-    fallAt: null,
+    fallAt: fromTop ? t : null,
+    depth: Math.random(),                                  // where on the pile's face (or how far back on the ground) it comes to rest
     // everything below is rolled per leaf, the first one included
     curl: (Math.random() - 0.5) * 70,                      // the push bends into an arc, px/s sideways
     swayHz: 1.2 + Math.random() * 1.8,
@@ -1330,22 +1394,572 @@ function spawnLeaf(t, hero) {
     born: t,
   });
 }
+// ---- the pile in the footer --------------------------------------------------
+// A raked-up mound of leaves, painted once onto a canvas inside the footer. The
+// same height curve tells the falling leaves where the pile's surface is, so
+// some come to rest on it and the others on the ground beside it.
+const foot = document.getElementById('foot');
+const pileCanvas = document.getElementById('pile');
+const GROUND_PAD = 34; // the ground line, px above the bottom of the footer
+function pileShape(W) { const s = Math.max(70, Math.min(95, W * 0.07)); return { cx: W * 0.62, s, H: s * 0.72 }; }
+function pileH(x, W) {
+  const p = pileShape(W), u = (x - p.cx) / p.s;
+  if (Math.abs(u) >= 1.6) return 0;
+  const hill = Math.pow(Math.cos((u / 1.6) * Math.PI / 2), 1.5); // a rounded mound, not a cone
+  return p.H * hill * (1 + 0.06 * Math.sin(u * 7) + 0.04 * Math.sin(u * 13 + 1)); // a little lumpy
+}
+const pileSprites = Array.from({ length: 26 }, randomLeafSprite);
+// lying flat: the blade is squashed toward the ground before it is turned
+function layLeaf(c, sprite, x, y, size, roll, squash, shade, alpha) {
+  c.save();
+  c.translate(x, y);
+  c.scale(1, squash);
+  c.rotate(roll);
+  c.globalAlpha = 0.3 * alpha;                             // a little shadow under it
+  c.drawImage(sprite.dark, -size / 2 + 1, -size / 2 + 3 / squash, size, size);
+  c.globalAlpha = alpha;
+  c.drawImage(sprite.base, -size / 2, -size / 2, size, size);
+  if (shade > 0.01) { c.globalAlpha = shade * alpha; c.drawImage(sprite.dark, -size / 2, -size / 2, size, size); }
+  c.restore();
+}
+function paintPile() {
+  const W = foot.clientWidth, Hh = foot.clientHeight;
+  if (!W || !Hh) return;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  pileCanvas.width = Math.ceil(W * dpr);
+  pileCanvas.height = Math.ceil(Hh * dpr);
+  const c = pileCanvas.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, Hh);
+  const ground = Hh - GROUND_PAD, p = pileShape(W);
+  // its own small seeded generator, so the pile is the same pile after a resize
+  let seed = 90210;
+  const r = () => { seed = (seed + 0x6D2B79F5) | 0; let k = Math.imul(seed ^ (seed >>> 15), 1 | seed); k = (k + Math.imul(k ^ (k >>> 7), 61 | k)) ^ k; return ((k ^ (k >>> 14)) >>> 0) / 4294967296; };
+  const scale = W < 600 ? 0.8 : 1;
+  // soft shadow on the ground under the mound
+  c.save();
+  c.translate(p.cx, ground + 2); c.scale(1, 0.1);
+  const sh = c.createRadialGradient(0, 0, p.s * 0.4, 0, 0, p.s * 2);
+  sh.addColorStop(0, 'rgba(70, 35, 0, 0.26)'); sh.addColorStop(1, 'rgba(70, 35, 0, 0)');
+  c.fillStyle = sh; c.beginPath(); c.arc(0, 0, p.s * 2, 0, Math.PI * 2); c.fill();
+  c.restore();
+  // a small leaf-coloured heart well inside the mound, only so no paper can show
+  // through; the leaves below bury it completely
+  c.beginPath(); c.moveTo(p.cx - p.s * 1.05, ground);
+  for (let x = p.cx - p.s * 1.05; x <= p.cx + p.s * 1.05; x += 4) c.lineTo(x, ground - Math.max(0, pileH(x, W) * 0.78 - 16));
+  c.lineTo(p.cx + p.s * 1.05, ground); c.closePath();
+  c.fillStyle = 'rgb(168, 112, 28)'; c.fill();
+  // loose ones on the ground: thick near the pile, thinning out to the edges
+  for (let i = 0; i < 70; i++) {
+    const near = i < 52;
+    const x = near ? p.cx + (r() + r() + r() - 1.5) * p.s * 3.2 : r() * W;
+    layLeaf(c, pileSprites[Math.floor(r() * pileSprites.length)], x, ground - r() * 12, (24 + r() * 30) * scale, r() * 6.3, 0.22 + r() * 0.3, 0.1 + r() * 0.2, 1);
+  }
+  // the mound itself, back to front: the first ones down sit deepest in shade
+  const N = Math.round((p.s * p.H) / 22);
+  for (let i = 0; i < N; i++) {
+    const x = p.cx + (r() < 0.5 ? r() * 2 - 1 : (r() + r() - 1)) * p.s * 1.58; // even cover, a little thicker in the middle
+    const h = pileH(x, W);
+    const k = i / N;
+    // early layers fill the body, the last ones favour the surface so the outline reads leafy
+    const v = k < 0.7 ? r() : 0.75 + r() * 0.3;
+    layLeaf(c, pileSprites[Math.floor(r() * pileSprites.length)], x, ground - v * h - 4, (16 + r() * 20) * scale, r() * 6.3, 0.4 + r() * 0.55, 0.5 * Math.pow(1 - k, 1.4) + (1 - v) * 0.12, 1);
+  }
+}
+addEventListener('resize', paintPile);
+paintPile();
+
+// ---- the jump ---------------------------------------------------------------------
+// When the pile scrolls into view a small figure runs in from the left edge,
+// leaps, and lands in the leaves. Some of them fly up and come back down, the
+// pile gives a little, and after a beat a head peeks out of the middle.
+// Clicking the footer afterwards does it again.
+const jump = { state: 'idle', at: 0, burst: false, puff: false };
+const burstLeaves = [];
+// ---- the figure ---------------------------------------------------------------------
+// Everything about her is a number, a switch or a colour in K, so she can be tuned
+// on her own page (kid.html, a dial panel) and the copied values pasted back here.
+const KID_DEFAULTS = {
+  head: 22, bodyW: 19, bodyH: 1.5, legLen: 11, legW: 5, boot: 4.5, armLen: 9, armW: 5, hand: 3, lean: 0.18,
+  curl: 3, volume: 1.09, bob: 0.8, back: 0.5, bounce: 1, fringe: true,
+  eye: 1.3, blushAmount: 0.46, glasses: true, glassSize: 5.5, glassLine: 1.1,
+  scarfOn: true, scarfLen: 1.55,
+  top: '#991700', trousers: '#15046c', boots: '#2a1d14', scarf: '#bf3100',
+  skin: '#eebb93', hair: '#5b3519', specs: '#2f5d3e', blush: '#f0788c', ink: '#2a1d14',
+};
+const K = { ...KID_DEFAULTS };
+const hexCh = (hex, s) => (parseInt(hex.slice(1), 16) >> s) & 255;
+const shadeHex = (hex, f) => `rgb(${[16, 8, 0].map((s) => Math.max(0, Math.min(255, Math.round(hexCh(hex, s) * f)))).join(', ')})`;
+const alphaHex = (hex, a) => `rgba(${hexCh(hex, 16)}, ${hexCh(hex, 8)}, ${hexCh(hex, 0)}, ${a})`;
+// A full head of small curls. Wherever hair is wanted, curls are scattered from a
+// fixed seed (so they hold still from frame to frame) in three shades, and rows of
+// them are laid along every edge, so the mass never shows a straight line.
+function curlTone(i) { return i % 3 === 1 ? shadeHex(K.hair, 1.22) : i % 3 === 2 ? shadeHex(K.hair, 0.82) : K.hair; }
+function curlRow(c, x0, y0, x1, y1, r) {
+  const n = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) / (r * 1.15)));
+  for (let i = 0; i <= n; i++) {
+    c.fillStyle = curlTone(i + 1);
+    c.beginPath(); c.arc(x0 + ((x1 - x0) * i) / n + ((i * 5) % 3 - 1) * r * 0.25, y0 + ((y1 - y0) * i) / n + ((i * 7) % 3 - 1) * r * 0.3, r * (0.9 + ((i * 3) % 4) * 0.08), 0, Math.PI * 2); c.fill();
+  }
+}
+function curlScatter(c, inside, seed) {
+  let sd = seed;
+  const rnd = () => { sd = (sd + 0x6D2B79F5) | 0; let k = Math.imul(sd ^ (sd >>> 15), 1 | sd); k = (k + Math.imul(k ^ (k >>> 7), 61 | k)) ^ k; return ((k ^ (k >>> 14)) >>> 0) / 4294967296; };
+  const n = Math.round(Math.min(260, 1500 / (K.curl * K.curl)));
+  for (let i = 0; i < n; i++) {
+    const x = (rnd() * 2 - 1) * 20 * K.volume, y = (rnd() * 2 - 1) * 20 * K.volume, r = K.curl * (0.75 + rnd() * 0.5);
+    if (!inside(x, y)) continue;
+    c.fillStyle = curlTone(i);
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  }
+}
+// a ring of overlapping curls round the outline
+function curls(c, cx, cy, from, to, rad) {
+  const n = Math.max(3, Math.round(((to - from) / 3.6) * 11 * (6.2 / K.curl)));
+  for (let i = 0; i < n; i++) {
+    const a = from + ((to - from) * i) / (n - 1);
+    const out = rad + (i % 2 ? 1.5 : -0.5), r = K.curl + ((i * 7) % 3) * 0.7;
+    c.fillStyle = curlTone(i);
+    c.beginPath(); c.arc(cx + Math.cos(a) * out, cy + Math.sin(a) * out, r, 0, Math.PI * 2); c.fill();
+  }
+}
+// side view, facing right; origin at the feet. pose is 'run' or 'jump'
+function drawKid(c, x, y, k, pose, ph, sy) {
+  c.save();
+  c.translate(x, y);
+  c.scale(k, k * sy);
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  const air = pose === 'jump';
+  const hip = -K.legLen, seg = K.legLen / 2, arm = K.armLen / 2;
+  const bodyTop = 7 + K.bodyH + K.bodyW / 2, shoulder = -(7 + K.bodyH + K.bodyW * 0.13);
+  const limb = (ox, oy, a, bend, l1, l2, w, col, hand) => {
+    const kx = ox + Math.sin(a) * l1, ky = oy + Math.cos(a) * l1;
+    const fx = kx + Math.sin(a + bend) * l2, fy = ky + Math.cos(a + bend) * l2;
+    c.strokeStyle = col; c.lineWidth = w;
+    c.beginPath(); c.moveTo(ox, oy); c.lineTo(kx, ky); c.lineTo(fx, fy); c.stroke();
+    if (hand) { c.fillStyle = K.skin; c.beginPath(); c.arc(fx, fy, K.hand, 0, Math.PI * 2); c.fill(); }
+    else { c.strokeStyle = hand === false ? shadeHex(K.boots, 0.7) : K.boots; c.lineWidth = w + 1; c.beginPath(); c.moveTo(fx, fy); c.lineTo(fx + K.boot, fy); c.stroke(); }
+  };
+  const legA = (p) => Math.sin(p) * 0.85, legB = (p) => -(0.25 + 0.95 * Math.max(0, Math.cos(p)));
+  // far leg, far arm
+  if (air) limb(0, hip, 0.35, -1.25, seg, seg, K.legW, shadeHex(K.trousers, 0.7), false); else limb(0, hip, legA(ph + Math.PI), legB(ph + Math.PI), seg, seg, K.legW, shadeHex(K.trousers, 0.7), false);
+  c.save();
+  c.translate(0, hip);
+  c.rotate(air ? -0.12 : K.lean);                          // leaning into the run
+  if (air) limb(0, shoulder, 2.75, 0.2, arm, arm * 0.9, K.armW, shadeHex(K.top, 0.82), true); else limb(0, shoulder, Math.sin(ph) * 0.9, 1.1, arm, arm * 0.9, K.armW, shadeHex(K.top, 0.82), true);
+  c.restore();
+  // near leg
+  if (air) limb(0, hip, 0.95, -1.5, seg, seg, K.legW, K.trousers); else limb(0, hip, legA(ph), legB(ph), seg, seg, K.legW, K.trousers);
+  c.save();
+  c.translate(0, hip);
+  c.rotate(air ? -0.12 : K.lean);
+  // cartoon proportions: a round little body, stubby limbs, and a big head
+  c.strokeStyle = K.top; c.lineWidth = K.bodyW;             // jumper, round as a bean
+  c.beginPath(); c.moveTo(0, -7); c.lineTo(0, -7 - Math.max(0.01, K.bodyH)); c.stroke();
+  if (K.scarfOn) {
+    // scarf, its tail streaming out behind
+    const sy0 = -bodyTop + 1, L = K.scarfLen;
+    c.strokeStyle = K.scarf; c.lineWidth = 6;
+    c.beginPath(); c.moveTo(-5, sy0); c.quadraticCurveTo(-5 - 11 * L, sy0 - 4 + Math.sin(ph * 1.3) * 3, -5 - 23 * L, sy0 + (air ? -10 : 3) * L + Math.sin(ph) * 5); c.stroke();
+    c.lineWidth = 7; c.beginPath(); c.moveTo(-9, sy0); c.lineTo(10, sy0 + 1); c.stroke();
+  }
+  // the head, drawn in its own units (a radius of 14) and scaled to K.head
+  c.save();
+  c.translate(3, -(bodyTop + K.head * 0.9)); c.scale(K.head / 14, K.head / 14);
+  c.fillStyle = K.skin; c.beginPath(); c.arc(0, 0, 14, 0, Math.PI * 2); c.fill();
+  // the arm of the glasses runs back level and disappears under the hair
+  if (K.glasses) { c.strokeStyle = K.specs; c.lineWidth = K.glassLine; c.beginPath(); c.moveTo(7.5 - K.glassSize * 0.62, -1.4); c.lineTo(-2, -1.8); c.stroke(); }
+  // hair: a mop over the crown and down the back to the jaw, a heavy fringe coming
+  // forward over the brow, and the side falling in front of the ear
+  const from = 1.95 + Math.max(0, 1 - K.bob) * 1.1, vol = K.volume;
+  const ax = Math.cos(from) * 14.5, ay = Math.sin(from) * 14.5, fx = Math.cos(5.62) * 14.5, fy = Math.sin(5.62) * 14.5;
+  // running, the whole mop bobs a beat behind her steps and gives a little; in the air it lifts
+  const bob = air ? -1.3 * K.bounce : -(0.5 + 0.5 * Math.cos(ph * 2 - 0.9)) * 1.3 * K.bounce;   // only ever up from rest, so the fringe never drops over her glasses
+  c.save();
+  c.translate(0, bob);
+  // a little more length low at the back of the head, well clear of the neck; it swings the most
+  for (let j = Math.round(K.back * 2) - 1; j >= 0; j--) curls(c, -1 - j * 0.8, bob * 0.6 * (j + 1), from + 0.3, Math.PI + 0.1 - j * 0.12, (14.6 + j * 2.2) * vol);
+  c.fillStyle = K.hair;
+  c.beginPath(); c.arc(0, 0, 14.5, from, 5.62); c.lineTo(3.5, -6.5); c.lineTo(0.5, 3); c.closePath(); c.fill();
+  const inHair = (x, y) => {
+    const r = Math.hypot(x, y); let a = Math.atan2(y, x); if (a < 0) a += Math.PI * 2;
+    if (r > 15.5 * vol || a < from || a > 5.68) return false;
+    return !(x > 0.5 && y > -7 + x * 0.1) && !(x > -1 && y > 3);     // keeps off the face
+  };
+  curlScatter(c, inHair, 7);
+  curls(c, 0, 0, from, 5.6, 13.5 * vol);
+  curlRow(c, fx, fy, 3.5, -6.5, K.curl);                              // the fringe's lower edge, over the brow
+  curlRow(c, 3.5, -6.5, 0.5, 3, K.curl);                              // down in front of the ear
+  curlRow(c, 0.5, 3, ax, ay, K.curl);                                 // and along the jaw to the nape
+  for (let j = 0; K.bob >= 1 && j <= Math.round((K.bob - 1) * 4); j++) curlRow(c, -13 * vol, 9 + j * 5.5, -3, 10 + j * 5.5, K.curl);
+  c.restore();
+  c.fillStyle = alphaHex(K.blush, K.blushAmount); c.beginPath(); c.arc(5, 6, 3, 0, Math.PI * 2); c.fill();
+  // a standing oval for an eye, and the lens an upright oval too: seen from the side it is narrowed
+  c.fillStyle = K.ink; c.beginPath(); c.ellipse(7.5, -1, K.eye * 0.72, K.eye * 1.3, 0, 0, Math.PI * 2); c.fill();
+  if (K.glasses) { c.strokeStyle = K.specs; c.lineWidth = K.glassLine; c.beginPath(); c.ellipse(7.5, -1, K.glassSize * 0.62, K.glassSize, 0, 0, Math.PI * 2); c.moveTo(7.5 + K.glassSize * 0.62, -2); c.quadraticCurveTo(7.5 + K.glassSize * 0.62 + 1.4, -3.2, 7.5 + K.glassSize * 0.62 + 2.6, -2.2); c.stroke(); }
+  if (air) { c.fillStyle = K.ink; c.beginPath(); c.ellipse(8, 6.5, 2.6, 3.2, 0, 0, Math.PI * 2); c.fill(); }
+  else { c.strokeStyle = K.ink; c.lineWidth = 1.5; c.beginPath(); c.arc(6.5, 4, 4, 0.25, 1.7); c.stroke(); }
+  c.restore();
+  // near arm
+  if (air) limb(0, shoulder, 2.45, 0.25, arm, arm * 0.9, K.armW, K.top, true); else limb(0, shoulder, -Math.sin(ph) * 0.9, 1.1, arm, arm * 0.9, K.armW, K.top, true);
+  c.restore();
+  c.restore();
+}
+// facing us, just the head, for peeking out of the leaves
+function drawPeek(c, x, y, k, blink) {
+  c.save();
+  c.translate(x, y);
+  c.scale((k * K.head) / 14, (k * K.head) / 14);
+  const reach = 0.95 * Math.min(1, K.bob), vol = K.volume;
+  // behind the face: the mass at the sides, down to the jaw (or further, for a longer bob)
+  const low = Math.sin(reach) * 15.5 + Math.max(0, K.bob - 1) * 22;
+  curlScatter(c, (x, y) => Math.hypot(x, y * 0.92) < 17 * vol && Math.hypot(x, y) > 9 && y < low, 11);
+  curls(c, 0, 0, Math.PI - reach, Math.PI * 2 + reach, 15.5 * vol);
+  for (const sx of [-1, 1]) for (let j = 0; K.bob > 1 && j <= Math.round((K.bob - 1) * 4); j++) curlRow(c, sx * 16 * vol, 12 + j * 5.5, sx * 10, 12 + j * 5.5, K.curl);
+  c.fillStyle = K.skin; c.beginPath(); c.arc(0, 0, 15, 0, Math.PI * 2); c.fill();
+  // over the face: the crown, and a heavy curly fringe down to the brows
+  c.fillStyle = K.hair; c.beginPath(); c.arc(0, 0, 15.6, Math.PI + 0.62, Math.PI * 2 - 0.62); c.closePath(); c.fill();
+  curlScatter(c, (x, y) => Math.hypot(x, y) < 16 * vol && y < (K.fringe ? -6.5 : -10), 23);
+  for (const sx of [-1, 1]) curlRow(c, sx * 15, -7, sx * 13.5, 4, K.curl);          // the sides coming in over the temples
+  if (K.fringe) { curlRow(c, -13, -7.5, 13, -7.5, K.curl); curlRow(c, -11.5, -5.6, 11.5, -5.6, K.curl * 0.9); }
+  else curlRow(c, -11, -10.5, 11, -10.5, K.curl);
+  c.fillStyle = alphaHex(K.blush, K.blushAmount);
+  for (const sx of [-1, 1]) { c.beginPath(); c.arc(sx * 9.5, 6.5, 3, 0, Math.PI * 2); c.fill(); }
+  c.fillStyle = K.ink; c.strokeStyle = K.ink; c.lineWidth = 1.6; c.lineCap = 'round';
+  for (const sx of [-1, 1]) {
+    c.beginPath();
+    if (blink) { c.moveTo(sx * 6 - 2, 1); c.lineTo(sx * 6 + 2, 1); c.stroke(); }
+    else { c.ellipse(sx * 6, 0.5, K.eye * 0.78, K.eye * 1.35, 0, 0, Math.PI * 2); c.fill(); }   // standing ovals
+  }
+  if (K.glasses) {
+    c.strokeStyle = K.specs; c.lineWidth = K.glassLine;
+    const g = K.glassSize + 0.2, gx = Math.max(6, g + 1.3);   // always room for the bridge over the nose
+    c.beginPath();
+    for (const sx of [-1, 1]) { c.moveTo(sx * gx + g, 0.5); c.arc(sx * gx, 0.5, g, 0, Math.PI * 2); }
+    c.moveTo(-gx + g, -0.3); c.quadraticCurveTo(0, -2.2, gx - g, -0.3);
+    c.stroke();
+  }
+  c.restore();
+}
+// the tuned values from kid.html ride along when this page is opened with #dials
+if (location.hash.includes('dials')) { try { Object.assign(K, JSON.parse(localStorage.getItem('fall-kid') || '{}')); } catch (e) { /* storage blocked */ } }
+// leaves thrown up by a landing: up and out from around atX, then back down onto the pile
+function tossLeaves(W, n, power, atX, spread) {
+  for (let i = 0; i < n; i++) {
+    const fx = atX + (Math.random() * 2 - 1) * spread;
+    burstLeaves.push({
+      fx, fy: -pileH(fx, W) * 0.84 - 4,                       // relative to the ground line
+      vx: ((fx - atX) / spread) * 170 * power + (Math.random() - 0.35) * 130 * power,
+      vy: -(140 + Math.random() * 300) * power,
+      roll: Math.random() * 6.3, turn: (Math.random() - 0.5) * 7, size: (20 + Math.random() * 24) * (W < 600 ? 0.8 : 1),
+      sprite: pileSprites[Math.floor(Math.random() * pileSprites.length)], depth: Math.random(), ph: Math.random() * 6.3,
+    });
+  }
+}
+// the pile gives under a landing and wobbles back
+let pileHitAt = -10;
+function wobblePile(t, W) {
+  const e = t - pileHitAt;
+  if (e > 2.1) return;
+  const sc = 1 - 0.08 * Math.exp(-4 * e) * Math.cos(13 * e);
+  pileCanvas.style.transformOrigin = `${pileShape(W).cx}px ${foot.clientHeight - GROUND_PAD}px`;
+  pileCanvas.style.transform = e < 2 ? `scaleY(${sc.toFixed(4)})` : '';
+}
+function flyBurst(t, dt, fr, groundY) {
+  const W = fr.width;
+  for (let i = burstLeaves.length - 1; i >= 0; i--) {
+    const B = burstLeaves[i];
+    B.vy += 520 * dt;
+    B.vx -= B.vx * 1.5 * dt;
+    if (B.vy > 0) { B.vy -= B.vy * 2.2 * dt; B.vx += Math.sin(t * 3 + B.ph) * 60 * dt; }   // flutters on the way down
+    B.fx += B.vx * dt; B.fy += B.vy * dt;
+    B.turn -= B.turn * 1.2 * dt;
+    B.roll += B.turn * dt;
+    const h = pileH(B.fx, W);
+    const restY = -(h > 6 ? h * (0.3 + 0.68 * B.depth) : B.depth * 12);
+    if (B.vy > 0 && B.fy >= restY) {
+      settled.push({ sprite: B.sprite, fx: B.fx, fy: restY - GROUND_PAD, size: B.size, roll: B.roll, rollTo: 0, squash: h > 6 ? 0.45 + Math.random() * 0.45 : 0.24 + Math.random() * 0.26, at: t, goneAt: 0 });
+      burstLeaves.splice(i, 1);
+      continue;
+    }
+    layLeaf(lctx, B.sprite, fr.left + B.fx, groundY + B.fy, B.size, B.roll, 0.85, 0, 1);
+  }
+}
+function flyJump(t, dt, fr, groundY) {
+  const W = fr.width, p = pileShape(W);
+  const k = Math.max(0.62, Math.min(1, W / 1400));          // the figure keeps its size whatever the pile's
+  const surf = (x) => groundY - pileH(x, W) * 0.84;          // x in footer coordinates
+  if (jump.state === 'idle') {
+    if (!landed || !W || groundY > innerHeight - 8 || groundY < 0) return;
+    Object.assign(jump, { state: reduceMotion ? 'peek' : 'go', at: t + 0.45, burst: false, puff: false });
+  }
+  const x0 = -50, xTake = Math.max(20, p.cx - Math.max(p.s * 2.4, 190 * k));
+  const RUN = (xTake - x0) / (430 * k), LEAP = 0.72, SINK = 0.22, HIDE = 0.75, RISE = 0.6;
+  let tau = t - jump.at;
+  if (jump.state === 'peek' && reduceMotion) tau = RUN + LEAP + SINK + HIDE + RISE + (t - jump.at);
+  const throwLeaves = (n, power) => tossLeaves(W, n, power, p.cx, p.s * 0.85);
+  if (tau >= 0 && jump.state === 'go') {
+    // everything that goes into the pile disappears below its surface
+    lctx.save();
+    lctx.beginPath();
+    lctx.moveTo(fr.left - 200, -3000); lctx.lineTo(fr.left - 200, groundY + 6);
+    for (let x = p.cx - p.s * 1.6; x <= p.cx + p.s * 1.6; x += 5) lctx.lineTo(fr.left + x, x < p.cx - p.s * 1.5 || x > p.cx + p.s * 1.5 ? groundY + 6 : surf(x) + 6);
+    lctx.lineTo(fr.right + 200, groundY + 6); lctx.lineTo(fr.right + 200, -3000);
+    lctx.closePath(); lctx.clip();
+    if (tau < RUN) {
+      const x = x0 + (xTake - x0) * (tau / RUN), ph = tau * 15;
+      drawKid(lctx, fr.left + x, groundY - Math.abs(Math.sin(ph)) * 3 * k, k, 'run', ph, 1);
+    } else if (tau < RUN + LEAP + SINK) {
+      const q = Math.min(1, (tau - RUN) / LEAP), sink = Math.max(0, (tau - RUN - LEAP) / SINK);
+      const landH = p.H * 0.4 * (1 - sink);
+      const x = xTake + (p.cx - xTake) * Math.min(1, (tau - RUN) / (LEAP + SINK * 0.5));
+      const y = groundY - landH * q - (p.H + 70 * k) * 4 * q * (1 - q) * 0.62;
+      drawKid(lctx, fr.left + x, y, k, 'jump', tau * 9, 1 - 0.62 * sink);
+      if (!jump.burst && q > 0.84) { jump.burst = true; pileHitAt = t; throwLeaves(W < 600 ? 16 : 26, 1); }
+    }
+    lctx.restore();
+  }
+  // the head coming up through the middle
+  const peekFrom = RUN + LEAP + SINK + HIDE;
+  if (tau > peekFrom && (jump.state === 'go' || jump.state === 'peek' || jump.state === 'done')) {
+    const r = Math.min(1, (tau - peekFrom) / RISE);
+    const back = 1 + 2.2 * Math.pow(r - 1, 3) + 1.2 * Math.pow(r - 1, 2);   // rises a touch too far, settles back
+    if (!jump.puff && !reduceMotion) { jump.puff = true; throwLeaves(6, 0.45); }
+    if (r >= 1) jump.state = 'done';
+    const hx = fr.left + p.cx, top = surf(p.cx);
+    const hk = (k * K.head) / 20;                              // the peek scales with her head
+    const hy = top + 42 * hk - (42 * hk + 13 * hk) * back + Math.sin(t * 1.4) * 1.1 * r;
+    lctx.save();
+    lctx.beginPath(); lctx.rect(hx - 80, top - 160, 160, 160 + 5 * k); lctx.clip();
+    drawPeek(lctx, hx, hy, k, (t % 3.7) < 0.13);
+    layLeaf(lctx, pileSprites[3], hx + 10 * hk, hy - 22 * hk, 24 * hk, 0.9, 0.8, 0, 1);   // one caught in the hair
+    lctx.restore();
+    // a few leaves in front, so the head sits in the pile rather than behind a line
+    const cover = [[-27, 4, 1.1, 5], [-14, 8, 3.3, 11], [-2, 10, 4.4, 9], [11, 9, 2.3, 14], [25, 4, 5.6, 20]];
+    for (const [dx, dy, roll, si] of cover) layLeaf(lctx, pileSprites[si], hx + dx * hk, top + (dy + 7) * k, 30 * hk, roll, 0.6, 0.05, r);
+  }
+}
+
+// ---- the other footer: a trampoline ---------------------------------------------------
+// This is the footer visitors get. (The earlier one, where a little figure runs in
+// and jumps into the pile, is kept but hidden: open the page with ?footer=kid.)
+// No figure here: the visitor's own cursor is the
+// one that jumps. Wherever they click above the little trampoline, the cursor is
+// dropped from that spot, straight down or at an angle depending on where they
+// stand, and the trampoline shoots it toward the pile. A dashed line shows the
+// whole flight before they let go, so it can be aimed.
+const FOOT_MODE = new URLSearchParams(location.search).get('footer') === 'kid' ? 'jump' : 'trampoline';
+const mouse = { x: 0, y: 0, seen: false };
+addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.seen = true; });
+const tramp = { shots: [], hitAt: -10, used: false, stuck: null };
+const TRAMP_TILT = 0.16, TRAMP_G = 1800, SHOT_DT = 1 / 120;
+function trampSpot(W) {
+  const p = pileShape(W), k = Math.max(0.62, Math.min(1, W / 1400));
+  return { x: Math.max(64, p.cx - Math.max(p.s * 4.3, 340 * k)), h: 36 * k, w: 104 * k, k };
+}
+// the whole flight worked out ahead of time, in footer coordinates (y is measured
+// from the ground line, negative upward): the drop, the bounce, the arc, the landing
+function plotShot(fx, gy, W) {
+  const T = trampSpot(W), ty = -T.h, fall = ty - gy;
+  if (fall < 30) return null;
+  const t1 = Math.sqrt((2 * fall) / TRAMP_G), vx0 = (T.x - fx) / t1;
+  const pts = [];
+  for (let q = 0; q < t1; q += SHOT_DT) pts.push({ x: fx + vx0 * q, y: gy + 0.5 * TRAMP_G * q * q });
+  const bounceI = pts.length;
+  pts.push({ x: T.x, y: ty });                               // the touch itself, so the drawn line turns on the mat
+  const nx = Math.sin(TRAMP_TILT), ny = -Math.cos(TRAMP_TILT);
+  const d = vx0 * nx + TRAMP_G * t1 * ny;
+  let vx = (vx0 - 2 * d * nx) * 0.82, vy = (TRAMP_G * t1 - 2 * d * ny) * 0.82, x = T.x, y = ty, land = { off: true };
+  for (let i = 0; i < 720; i++) {
+    vy += TRAMP_G * SHOT_DT; x += vx * SHOT_DT; y += vy * SHOT_DT;
+    pts.push({ x, y });
+    const h = pileH(x, W) * 0.84;
+    if (vy > 0 && y >= -h + (h > 6 ? 8 : 0)) { land = { x, y, pile: h > 6, speed: Math.hypot(vx, vy), angle: Math.atan2(vy, vx) }; break; }
+    if (x < -80 || x > W + 80) break;
+  }
+  return { pts, bounceI, land };
+}
+// the ordinary arrow cursor, tip at the origin; rot turns the way its tip points
+const ARROW_TIP = Math.atan2(-0.93, -0.37);
+function drawArrow(c, x, y, rot, scale, alpha) {
+  c.save();
+  c.translate(x, y); c.rotate(rot - ARROW_TIP); c.scale(scale, scale); c.translate(-5, -10);   // turns about its middle
+  c.globalAlpha = alpha;
+  c.beginPath();
+  c.moveTo(0, 0); c.lineTo(0, 17); c.lineTo(4, 13.2); c.lineTo(6.8, 19.6); c.lineTo(9.4, 18.5); c.lineTo(6.7, 12.2); c.lineTo(12, 12.2); c.closePath();
+  c.lineJoin = 'round'; c.lineWidth = 2.2; c.strokeStyle = '#fff'; c.stroke();
+  c.fillStyle = '#111'; c.fill();
+  c.restore();
+}
+function flyTramp(t, dt, fr, groundY) {
+  const W = fr.width;
+  if (!landed || !W || groundY > innerHeight + 40 || groundY < 0) return;
+  const T = trampSpot(W), p = pileShape(W);
+  const tx = fr.left + T.x, ty = groundY - T.h;
+  // The trampoline, seen from a little above: a round black mat hung on springs
+  // inside a padded blue rim, on bent steel legs, with its shadow on the ground.
+  // The mat dips and rings when it is hit.
+  const e = t - tramp.hitAt, dip = e < 1.6 ? 9 * T.k * Math.exp(-4.5 * e) * Math.cos(24 * e) : 0;
+  const cs = Math.cos(TRAMP_TILT), sn = Math.sin(TRAMP_TILT), rx = T.w / 2, ry = T.w * 0.15, u = T.k;
+  const at = (ex, ey) => [tx + ex * cs - ey * sn, ty + ex * sn + ey * cs];   // a point on the tilted frame, on screen
+  lctx.save();
+  lctx.lineCap = 'round'; lctx.lineJoin = 'round';
+  const shade = lctx.createRadialGradient(tx, groundY + 2, 0, tx, groundY + 2, rx * 1.25);
+  shade.addColorStop(0, 'rgba(50, 28, 6, 0.26)'); shade.addColorStop(1, 'rgba(50, 28, 6, 0)');
+  lctx.save(); lctx.translate(tx, groundY + 2); lctx.scale(1, 0.13); lctx.translate(-tx, -groundY - 2);
+  lctx.fillStyle = shade; lctx.beginPath(); lctx.arc(tx, groundY + 2, rx * 1.25, 0, Math.PI * 2); lctx.fill();
+  lctx.restore();
+  // legs: the far pair darker and set in, the near pair lighter, each with a foot
+  for (const [ex, ey, col, wd] of [[-rx * 0.62, -ry * 0.7, '#565b63', 2.6], [rx * 0.62, -ry * 0.7, '#565b63', 2.6], [-rx * 0.8, ry * 0.55, '#8d939b', 3.2], [rx * 0.8, ry * 0.55, '#8d939b', 3.2]]) {
+    const [X, Y] = at(ex, ey), gy = groundY - (ey < 0 ? 3 * u : 0), splay = Math.sign(ex) * 5 * u;
+    lctx.strokeStyle = col; lctx.lineWidth = wd * u;
+    lctx.beginPath(); lctx.moveTo(X, Y); lctx.quadraticCurveTo(X + splay * 0.2, (Y + gy) / 2, X + splay, gy); lctx.stroke();
+    lctx.beginPath(); lctx.moveTo(X + splay - 5 * u, gy); lctx.lineTo(X + splay + 5 * u, gy); lctx.stroke();
+  }
+  lctx.translate(tx, ty); lctx.rotate(TRAMP_TILT);
+  // the padded rim has some thickness: its side first, then its top
+  lctx.fillStyle = '#1f4379'; lctx.beginPath(); lctx.ellipse(0, 4.5 * u, rx, ry, 0, 0, Math.PI * 2); lctx.fill();
+  const pad = lctx.createLinearGradient(0, -ry, 0, ry);
+  pad.addColorStop(0, '#2c5c9f'); pad.addColorStop(1, '#3f74bb');
+  lctx.fillStyle = pad; lctx.beginPath(); lctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); lctx.fill();
+  lctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'; lctx.lineWidth = 1.2 * u;
+  lctx.beginPath(); lctx.ellipse(0, 0, rx * 0.93, ry * 0.9, 0, Math.PI * 1.05, Math.PI * 1.75); lctx.stroke();
+  // the gap where the springs are
+  lctx.fillStyle = '#c9c4b8'; lctx.beginPath(); lctx.ellipse(0, 0.5 * u, rx * 0.8, ry * 0.76, 0, 0, Math.PI * 2); lctx.fill();
+  lctx.strokeStyle = '#6d7077'; lctx.lineWidth = 1.1 * u;
+  lctx.beginPath();
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+    lctx.moveTo(ca * rx * 0.8, 0.5 * u + sa * ry * 0.76); lctx.lineTo(ca * rx * 0.68, 0.5 * u + dip * 0.35 + sa * ry * 0.63);
+  }
+  lctx.stroke();
+  // the mat, sagging in the middle when something lands on it
+  const mat = lctx.createRadialGradient(0, dip, 0, 0, dip * 0.5, rx * 0.7);
+  mat.addColorStop(0, dip > 0.5 ? '#0e0e10' : '#1c1b1d'); mat.addColorStop(1, '#2b2a2d');
+  lctx.fillStyle = mat; lctx.beginPath(); lctx.ellipse(0, 0.5 * u + dip * 0.45, rx * 0.7, ry * 0.65 + Math.abs(dip) * 0.25, 0, 0, Math.PI * 2); lctx.fill();
+  lctx.strokeStyle = 'rgba(255, 255, 255, 0.12)'; lctx.lineWidth = 1 * u;
+  lctx.beginPath(); lctx.ellipse(0, 0.5 * u + dip * 0.45, rx * 0.5, ry * 0.42, 0, Math.PI * 1.1, Math.PI * 1.6); lctx.stroke();
+  lctx.restore();
+  lctx.save();
+  if (!tramp.used) {
+    lctx.fillStyle = 'rgba(2, 56, 122, 0.75)'; lctx.textAlign = 'center';
+    lctx.font = "italic 400 15px 'Instrument Serif', Georgia, serif";
+    lctx.fillText('click anywhere above to drop your cursor', Math.max(140, tx), groundY + 22);
+  }
+  lctx.restore();
+  // the flight as it would go from where the cursor is now
+  const aiming = mouse.seen && tramp.shots.length === 0 && mouse.y < ty - 30 && mouse.y > 0;
+  if (aiming) {
+    const plot = plotShot(mouse.x - fr.left, mouse.y - groundY, W);
+    if (plot) {
+      lctx.save();
+      lctx.setLineDash([11, 11]); lctx.lineWidth = 4; lctx.lineCap = 'round'; lctx.lineJoin = 'round';
+      lctx.strokeStyle = 'rgba(2, 56, 122, 0.3)';
+      lctx.beginPath();
+      plot.pts.forEach((q, i) => { if (i % 3 && i !== plot.pts.length - 1 && i !== plot.bounceI) return; const X = fr.left + q.x, Y = groundY + q.y; if (i) lctx.lineTo(X, Y); else lctx.moveTo(X, Y); });
+      lctx.stroke();
+      if (!plot.land.off) { lctx.setLineDash([]); lctx.lineWidth = 2; lctx.beginPath(); lctx.arc(fr.left + plot.land.x, groundY + plot.land.y, 7, 0, Math.PI * 2); lctx.stroke(); }
+      lctx.restore();
+    }
+  }
+  // the last one to land: poking back out of the pile, or stuck in the ground for a while
+  const S = tramp.stuck;
+  if (S) {
+    const age = t - S.at;
+    if (S.pile) {
+      const up = smoother((age - 0.7) / 0.5), top = groundY - pileH(S.x, W) * 0.84;
+      if (up > 0) {
+        lctx.save();
+        lctx.beginPath(); lctx.rect(fr.left + S.x - 40, top - 60, 80, 60 + 4); lctx.clip();
+        drawArrow(lctx, fr.left + S.x, top + 16 - 22 * up, -Math.PI / 2 + Math.sin(t * 2.2) * 0.1 * up, 1.2 * T.k, 1);
+        lctx.restore();
+        layLeaf(lctx, pileSprites[7], fr.left + S.x - 7, top + 5, 24 * T.k, 1.3, 0.6, 0.05, up);
+        layLeaf(lctx, pileSprites[12], fr.left + S.x + 8, top + 6, 24 * T.k, 4.1, 0.6, 0.05, up);
+      }
+    } else {
+      const out = 1 - ramp01((age - 3.5) / 1);
+      if (out <= 0) tramp.stuck = null;
+      else {
+        lctx.save();
+        lctx.beginPath(); lctx.rect(fr.left + S.x - 40, groundY - 60, 80, 60 + 2); lctx.clip();
+        drawArrow(lctx, fr.left + S.x, groundY - 5 * T.k, S.angle, 1.2 * T.k, out);
+        lctx.restore();
+      }
+    }
+  }
+  // cursors in the air
+  for (let i = tramp.shots.length - 1; i >= 0; i--) {
+    const shot = tramp.shots[i], n = shot.plot.pts.length;
+    const at = Math.floor((t - shot.at) / SHOT_DT);
+    if (!shot.bounced && at >= shot.plot.bounceI) { shot.bounced = true; tramp.hitAt = t; }
+    if (at >= n - 1) {
+      const L = shot.plot.land;
+      tramp.shots.splice(i, 1);
+      if (!L.off) {
+        tramp.stuck = { x: L.x, pile: L.pile, angle: L.angle, at: t };
+        if (L.pile) { pileHitAt = t; tossLeaves(W, Math.round((W < 600 ? 9 : 14) * Math.min(1.6, L.speed / 900)), Math.min(1.1, L.speed / 1000), L.x, p.s * 0.55); }
+      }
+      continue;
+    }
+    const a = shot.plot.pts[at], b = shot.plot.pts[Math.min(n - 1, at + 2)];
+    drawArrow(lctx, fr.left + a.x, groundY + a.y, Math.atan2(b.y - a.y, b.x - a.x), 1.2 * T.k, 1);
+  }
+  document.documentElement.style.cursor = tramp.shots.length ? 'none' : '';   // it has left the hand
+}
+const ramp01 = (x) => Math.min(1, Math.max(0, x));
+if (FOOT_MODE === 'trampoline') {
+  addEventListener('pointerdown', (e) => {
+    if (!landed || tramp.shots.length || (e.target.closest && e.target.closest('a, button'))) return;
+    const fr = foot.getBoundingClientRect(), groundY = fr.bottom - GROUND_PAD;
+    if (groundY > innerHeight + 40 || groundY < 0) return;
+    const plot = plotShot(e.clientX - fr.left, e.clientY - groundY, fr.width);
+    if (!plot) return;
+    tramp.used = true;
+    tramp.shots.push({ plot, at: lastT, bounced: false });
+  });
+}
+// for checking from the console: __jump(1.2) shows the moment 1.2s into the run
+window.__jump = (tau) => Object.assign(jump, { state: 'go', at: lastT - tau, burst: false, puff: false });
+foot.addEventListener('click', () => { if (FOOT_MODE === 'jump' && jump.state === 'done' && !reduceMotion) jump.state = 'idle'; });
+
+const settled = [];        // leaves that have landed; they belong to the footer now and scroll with it
+const SETTLED_MAX = 90;    // beyond this the oldest fade away, so it never silts up
 function flyLeaves(t, dt, aboveTrees) {
-  // a steady trickle for as long as the camera is at or above the treetops
+  // a handful in the air at any time for as long as the camera is above the
+  // treetops. The first few are pushed in from the edges; after that they come
+  // down from the top, all the way to the footer.
   if (!aboveTrees && !flight) leavesMade = 0; // back under the canopy: the next visit starts fresh
   if (heroDue) { heroDue = false; if (leavesMade < P.leafCount) { spawnLeaf(t, true); leavesMade++; nextLeafAt = t + 0.9; } }
-  else if (aboveTrees && t > nextLeafAt && leavesMade < P.leafCount) {
-    spawnLeaf(t, false);
+  else if (aboveTrees && t > nextLeafAt && looseLeaves.length < P.leafCount) {
+    const later = leavesMade >= P.leafCount;
+    spawnLeaf(t, false, later);
     leavesMade++;
-    nextLeafAt = t + 0.8 + Math.random() * 1.6;
+    nextLeafAt = t + (later ? 1.4 + Math.random() * 3 : 0.8 + Math.random() * 1.6);
   }
   lctx.clearRect(0, 0, innerWidth, innerHeight);
+  // where the footer's ground is on screen right now
+  const fr = foot.getBoundingClientRect();
+  const groundY = fr.bottom - GROUND_PAD;
+  // landed leaves first, so the ones still falling pass in front of them
+  while (settled.length > SETTLED_MAX && !settled[0].goneAt) settled[0].goneAt = t;
+  for (let i = settled.length - 1; i >= 0; i--) {
+    const S = settled[i];
+    const out = S.goneAt ? 1 - (t - S.goneAt) / 3 : 1;
+    if (out <= 0) { settled.splice(i, 1); continue; }
+    const y = fr.bottom + S.fy;
+    if (y < -80 || y > innerHeight + 80) continue;
+    const k = smoother((t - S.at) / 0.9);                  // easing down flat, and down to the size of the pile's own leaves
+    layLeaf(lctx, S.sprite, fr.left + S.fx, y, S.size + (Math.min(S.size, 40) - S.size) * k, S.roll + S.rollTo * k, 1 + (S.squash - 1) * k, 0.12 * k, out);
+  }
+  if (FOOT_MODE === 'trampoline') flyTramp(t, dt, fr, groundY); else flyJump(t, dt, fr, groundY);
+  wobblePile(t, fr.width);
+  flyBurst(t, dt, fr, groundY);
   for (let i = looseLeaves.length - 1; i >= 0; i--) {
     const L = looseLeaves[i];
     const gone = Math.hypot(L.x - L.from.x, L.y - L.from.y);
     if (L.fallAt === null && gone > L.total * L.giveOut) L.fallAt = t;
     // while pushed, the path curls a little to one side of the straight line
-    const arc = Math.sin(Math.min(1, gone / (L.total * L.giveOut)) * Math.PI) * L.curl;
+    const arc = L.fallAt === null ? Math.sin(Math.min(1, gone / (L.total * L.giveOut)) * Math.PI) * L.curl : 0;
     let wantX = L.push.x - (L.push.y / (Math.hypot(L.push.x, L.push.y) || 1)) * arc;
     let wantY = L.push.y + (L.push.x / (Math.hypot(L.push.x, L.push.y) || 1)) * arc;
     let ease = 0.08;
@@ -1360,13 +1974,25 @@ function flyLeaves(t, dt, aboveTrees) {
     L.vy += (wantY - L.vy) * ease;
     L.x += L.vx * dt;
     L.y += L.vy * dt;
-    if (L.y > innerHeight + 70 || L.x < -120 || L.x > innerWidth + 120) { looseLeaves.splice(i, 1); continue; }
     // each leaf has its own facing and turns only slowly; once it is sinking it
     // leans into every swing and rocks, as before. No spinning about itself.
     const age = t - L.born;
     const sinking = L.fallAt === null ? 0 : Math.min(1, (t - L.fallAt) / 1.5);
     const lean = (Math.atan2(L.vx, 140) * 0.9 + Math.sin(t * L.rockHz + L.spin) * L.rock) * sinking;
     const roll = L.tilt + L.drift * age + lean;
+    const size = L.size * P.leafSize;
+    // touching down: on the face of the pile if it is over it, else on the ground
+    if (L.fallAt !== null && L.vy > 0) {
+      const h = pileH(L.x - fr.left, fr.width);
+      const restY = groundY - (h > 6 ? h * (0.3 + 0.68 * L.depth) : L.depth * 12);
+      if (L.y >= restY) {
+        settled.push({ sprite: L.sprite, fx: L.x - fr.left, fy: restY - fr.bottom, size, roll, rollTo: (Math.random() - 0.5) * 0.5,
+          squash: h > 6 ? 0.45 + Math.random() * 0.45 : 0.24 + Math.random() * 0.26, at: t, goneAt: 0 });
+        looseLeaves.splice(i, 1);
+        continue;
+      }
+    }
+    if (L.y > innerHeight + 70 || L.x < -120 || L.x > innerWidth + 120) { looseLeaves.splice(i, 1); continue; }
     // The blade is cupped along its spine. Each half is drawn on its own: as the
     // leaf rolls slowly about the spine one half turns toward us and widens while
     // the other turns away, narrows and falls into shade.
@@ -1375,7 +2001,6 @@ function flyLeaves(t, dt, aboveTrees) {
     lctx.save();
     lctx.translate(L.x, L.y);
     lctx.rotate(roll);
-    const size = L.size * P.leafSize;
     const fade = Math.min(1, (t - L.born) * 2), half = size / 2;
     const halves = [[0, -half * kl, half * kl + 0.6, kl], [64, 0, half * kr, kr]]; // [source x, dest x, dest width, facing]
     for (const [sx, dx, dw, k] of halves) {
@@ -1433,7 +2058,7 @@ function drawGrain() {
   gctx.fillRect(-TILE, -TILE, grainC.width + TILE * 2, grainC.height + TILE * 2);
   // projector flicker: tiny exposure wobble
   grainC.style.opacity = (P.grainOpacity + Math.random() * P.grainFlicker).toFixed(3);
-  if (washNow > 0.01) { gwctx.clearRect(0, 0, grainW.width, grainW.height); gwctx.drawImage(grainC, 0, 0); }
+  if (washNow > 0.01 && grainC.width && grainC.height) { gwctx.clearRect(0, 0, grainW.width, grainW.height); gwctx.drawImage(grainC, 0, 0); }
   grainW.style.opacity = (P.grainOpacity * 0.8 * washNow).toFixed(3);
 }
 addEventListener('resize', () => { sizeGrain(); drawGrain(); });
