@@ -141,14 +141,35 @@
     transform: translateX(-50%);
     margin: 0;
     padding: 18px 24px;
-    font: 600 12px/1 'Inter', system-ui, -apple-system, sans-serif;
-    letter-spacing: 0.01em;
+    line-height: 0;
     color: var(--ui);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.6s ease;
   }
-  .scrollcue.show { opacity: 1; }
+  .scrollcue svg { display: block; width: 14px; height: 14px; animation: nudge 2.6s ease-in-out infinite; }
+  .scrollcue.show { opacity: 0.75; } /* a quarter quieter than the text */
+  @keyframes nudge { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(3px); } }
+  @media (prefers-reduced-motion: reduce) { .scrollcue svg { animation: none; } }
+  /* sound on / off, bottom right; stays above the white site as it scrolls in */
+  .sound {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    margin: 0;
+    padding: 16px 20px;
+    border: 0;
+    background: none;
+    line-height: 0;
+    color: var(--ui);
+    cursor: pointer;
+  }
+  .sound svg { display: block; width: 16px; height: 16px; }
+  .sound .waves { transition: opacity 0.3s ease; }
+  .sound .slash { opacity: 0; transition: opacity 0.3s ease; }
+  .sound.off .waves { opacity: 0; }
+  .sound.off .slash { opacity: 1; }
   /* plain text button on the bottom edge, shown once the flight is over */
   .replay {
     position: fixed;
@@ -168,7 +189,7 @@
     transition: opacity 0.5s ease;
   }
   .replay.show { opacity: 1; pointer-events: auto; }
-  .replay:focus-visible, .zoom input:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
+  .replay:focus-visible, .sound:focus-visible, .zoom input:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
   /* camera height: a hairline on the right edge with snapped stops */
   .zoom {
     position: fixed;
@@ -239,8 +260,9 @@
 <canvas class="leaf" id="leaf"></canvas>
 <canvas class="grain" id="grain"></canvas>
 <canvas class="grain" id="grainWhite" style="mix-blend-mode: hard-light; opacity: 0"></canvas>
-<p class="scrollcue" id="scrollcue" aria-hidden="true">scroll</p>
+<p class="scrollcue" id="scrollcue" aria-hidden="true"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11M2.5 8 7 12.5 11.5 8"/></svg></p>
 <button class="replay" id="replay" type="button">replay</button>
+<button class="sound off" id="sound" type="button" aria-label="Sound" aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6H2z" fill="currentColor" stroke-width="1"/><g class="waves"><path d="M10.5 5.8a3 3 0 0 1 0 4.4"/><path d="M12.4 3.9a5.7 5.7 0 0 1 0 8.2"/></g><path class="slash" d="M10.6 6 14.4 10M14.4 6 10.6 10"/></svg></button>
 <!-- the height slider is hidden for now: remove the "hidden" attribute to bring it back -->
 <label class="zoom" id="zoom" hidden aria-label="Camera height, as a percentage of tree height">
   <ol aria-hidden="true"><li>125</li><li>100</li><li>75</li><li>50</li><li>25</li><li>0</li></ol>
@@ -924,7 +946,8 @@ zoomRange.addEventListener('input', () => {
 });
 const replay = document.getElementById('replay');
 // controls must not start a flight
-for (const el of [document.getElementById('zoom'), replay]) {
+const soundBtn = document.getElementById('sound');
+for (const el of [document.getElementById('zoom'), replay, soundBtn]) {
   el.addEventListener('pointerdown', (e) => e.stopPropagation());
   el.addEventListener('keydown', (e) => e.stopPropagation());
 }
@@ -973,26 +996,31 @@ function land() {
   });
 }
 
-// clicks and keys no longer start the flight; they only unlock the music, which
-// browsers will not play until the visitor has interacted with the page
-addEventListener('pointerdown', () => startMusic());
-addEventListener('keydown', (e) => {
-  startMusic();
-  if (e.key === 'm' || e.key === 'M') toggleMute();
-});
-
 // ---- music ------------------------------------------------------------------
 // The soundtrack is a YouTube video, played through YouTube's own embedded
-// player (nothing is downloaded or re-hosted). The player is set up quietly at
-// load; browsers only allow sound after a user gesture, so it starts on the
-// first click or key press, fades in slowly, and loops through every flight.
+// player (nothing is downloaded or re-hosted). It tries to start with sound the
+// moment the page loads. Most browsers refuse sound before the visitor has
+// touched the page; when that happens the video keeps playing silently, the
+// button shows "off", and the first click, tap or key press anywhere brings the
+// sound in. Either way it fades in slowly and loops through every flight.
 // If the player cannot load (for example inside a sandbox that blocks YouTube),
-// the quiet generated piece below plays instead. Press M to mute.
+// the quiet generated piece below plays instead.
+// The button (or M) turns sound off and on; the choice is remembered.
 const MUSIC_VIDEO = 'UZ9uyQI3pF0';
 const MUSIC_VOLUME = 55;   // 0..100, where the fade ends
 const MUSIC_FADE_S = 12;   // seconds the fade-in takes
-let music = null;          // set once sound has been started
+let wantSound = true;      // the visitor's choice
+try { wantSound = localStorage.getItem('fall-sound') !== 'off'; } catch (e) {}
+const AC = window.AudioContext || window.webkitAudioContext;
+const music = { ctx: null, master: null, audible: false, useGenerated: false, fade: 0 };
 let yt = null, ytReady = false, ytFailed = false;
+
+function showSound() {
+  const on = wantSound && music.audible;
+  soundBtn.classList.toggle('off', !on);
+  soundBtn.setAttribute('aria-pressed', String(on));
+  soundBtn.setAttribute('aria-label', on ? 'Turn sound off' : 'Turn sound on');
+}
 
 (function prepareYouTube() {
   const holder = document.createElement('div');
@@ -1010,64 +1038,108 @@ let yt = null, ytReady = false, ytFailed = false;
       host: 'https://www.youtube-nocookie.com',
       playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, loop: 1, playlist: MUSIC_VIDEO, playsinline: 1, rel: 0 },
       events: {
-        onReady: () => { ytReady = true; yt.setVolume(0); if (music && music.wantYT) playYouTube(); },
-        onError: () => { ytFailed = true; if (music && music.wantYT) fallBack(); },
-        // belt and braces for the loop: start over if it ever ends
-        onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) { yt.seekTo(0); yt.playVideo(); } },
+        onReady: () => { ytReady = true; if (wantSound) soundOn(); },
+        onError: () => { ytFailed = true; fallBack(); },
+        onStateChange: (e) => {
+          // belt and braces for the loop: start over if it ever ends
+          if (e.data === YT.PlayerState.ENDED) { yt.seekTo(0); yt.playVideo(); }
+          if (e.data === YT.PlayerState.PLAYING && wantSound && !yt.isMuted() && !music.audible) heard();
+        },
       },
     });
   };
   const tag = document.createElement('script');
   tag.src = 'https://www.youtube.com/iframe_api';
-  tag.onerror = () => { ytFailed = true; if (music && music.wantYT) fallBack(); };
+  tag.onerror = () => { ytFailed = true; fallBack(); };
   document.head.appendChild(tag);
+  // if nothing answers in a few seconds, stop waiting and use the generated piece
+  setTimeout(() => { if (!ytReady && !ytFailed) { ytFailed = true; fallBack(); } }, 6000);
 })();
 
 // for checking from the console: __music() reports what the soundtrack is doing
-window.__music = () => ({ ytReady, ytFailed, started: !!music, usingYouTube: !!(music && music.yt), usingGenerated: !!(music && music.master),
+window.__music = () => ({ ytReady, ytFailed, wantSound, audible: music.audible, usingGenerated: music.useGenerated,
   state: ytReady ? yt.getPlayerState() : null, volume: ytReady ? yt.getVolume() : null, muted: ytReady ? yt.isMuted() : null });
 
-function playYouTube() {
-  music.wantYT = false;
-  music.yt = true;
-  yt.unMute();
-  yt.setVolume(0);
-  yt.playVideo();
-  // slow fade-in, eased so it creeps in at first
+// the sound is really coming out: fade it in, eased so it creeps in at first
+function heard() {
+  music.audible = true;
+  showSound();
   const t0 = performance.now();
+  const secs = music.fadedOnce ? 1.5 : MUSIC_FADE_S; // the long fade is for the opening only
+  music.fadedOnce = true;
   clearInterval(music.fade);
   music.fade = setInterval(() => {
-    const k = Math.min(1, (performance.now() - t0) / (MUSIC_FADE_S * 1000));
-    if (!music.muted) yt.setVolume(Math.round(MUSIC_VOLUME * k * k));
+    const k = Math.min(1, (performance.now() - t0) / (secs * 1000));
+    if (wantSound) yt.setVolume(Math.round(MUSIC_VOLUME * k * k));
     if (k >= 1) clearInterval(music.fade);
   }, 120);
 }
+// ask for sound. Called at load, and again from the first gesture if the
+// browser turned the load-time attempt down.
+function soundOn() {
+  if (!wantSound || music.audible) return;
+  if (music.useGenerated) {
+    if (!music.ctx && AC) music.ctx = new AC();
+    if (!music.ctx) return;
+    if (!music.master) generated(music.ctx);
+    music.ctx.resume().then(() => {
+      if (music.ctx.state !== 'running' || music.audible) return;
+      music.audible = true;
+      showSound();
+      music.master.gain.setTargetAtTime(wantSound ? 0.5 : 0, music.ctx.currentTime, 4); // slow fade-in here too
+    }).catch(() => {});
+    return;
+  }
+  if (!ytReady) return;
+  const attempt = (music.attempt = (music.attempt || 0) + 1);
+  const rolling = yt.getPlayerState() === YT.PlayerState.PLAYING; // already playing silently
+  yt.unMute();
+  yt.setVolume(0);
+  yt.playVideo();
+  if (rolling) heard();
+  // turned down by the browser: keep the video rolling silently so the sound
+  // can come in without a pause on the first gesture
+  setTimeout(() => {
+    if (music.attempt !== attempt || !wantSound) return;
+    if (yt.getPlayerState() === YT.PlayerState.PLAYING && !yt.isMuted()) return;
+    clearInterval(music.fade);
+    music.audible = false;
+    music.fadedOnce = false;
+    showSound();
+    yt.mute();
+    yt.playVideo();
+  }, 1500);
+}
 function fallBack() {
-  music.wantYT = false;
-  if (music.ctx && !music.master) generated(music.ctx);
+  if (music.useGenerated) return;
+  music.useGenerated = true;
+  if (wantSound) soundOn();
 }
-function startMusic() {
-  if (music) return;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  // created inside the gesture so the fallback is allowed to run if it is needed
-  music = { ctx: AC ? new AC() : null, master: null, muted: false, yt: false, wantYT: true, fade: 0 };
-  if (ytFailed) fallBack();
-  else if (ytReady) playYouTube();
-  // otherwise the player is still loading: onReady or onError picks it up.
-  // If nothing answers in a few seconds, stop waiting and use the generated piece.
-  setTimeout(() => { if (music.wantYT) fallBack(); }, 6000);
+function setSound(on) {
+  wantSound = on;
+  try { localStorage.setItem('fall-sound', on ? 'on' : 'off'); } catch (e) {}
+  if (on) { soundOn(); showSound(); return; }
+  clearInterval(music.fade);
+  music.audible = false;
+  if (ytReady && !music.useGenerated) { yt.mute(); yt.pauseVideo(); }
+  if (music.master) music.master.gain.setTargetAtTime(0, music.ctx.currentTime, 0.2);
+  showSound();
 }
-function toggleMute() {
-  if (!music) return;
-  music.muted = !music.muted;
-  if (music.yt) { if (music.muted) yt.mute(); else yt.unMute(); }
-  if (music.master) music.master.gain.setTargetAtTime(music.muted ? 0 : 0.5, music.ctx.currentTime, 0.2);
-}
+const toggleSound = () => setSound(!(wantSound && music.audible));
+soundBtn.addEventListener('click', toggleSound);
+// clicks and keys do not start the flight; they only let the sound in when the
+// browser refused it at load
+// every event a browser may count as the visitor's first gesture (iOS Safari
+// only honours the release of a tap, not the press)
+for (const ty of ['pointerdown', 'pointerup', 'touchend', 'click']) addEventListener(ty, () => soundOn());
+addEventListener('keydown', (e) => {
+  if (e.key === 'm' || e.key === 'M') toggleSound(); else soundOn();
+});
+showSound();
+
 function generated(ctx) {
-  ctx.resume();
   const master = ctx.createGain();
-  master.gain.value = 0;
-  master.gain.setTargetAtTime(music.muted ? 0 : 0.5, ctx.currentTime, 4); // slow fade-in here too
+  master.gain.value = 0; // soundOn() fades it in once the context is allowed to run
   const comp = ctx.createDynamicsCompressor();
   master.connect(comp).connect(ctx.destination);
   music.master = master;
