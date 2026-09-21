@@ -135,20 +135,6 @@
     user-select: text;
   }
   #grainWhite { z-index: 7; }  /* the same grain carries on over the site and the leaves */
-  /* placeholder sections: stand-ins until the real projects and case studies arrive */
-  .block {
-    box-sizing: border-box;
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 18vh max(24px, 5vw) 10vh;
-  }
-  .block h2 { margin: 0 0 14px; font: italic 400 40px/1.1 'Instrument Serif', Georgia, serif; }
-  .block .lede { margin: 0 0 56px; max-width: 520px; font: 400 15px/1.6 'Inter', system-ui, sans-serif; opacity: 0.8; }
-  .cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 56px 40px; }
-  .cards .thumb { aspect-ratio: 4 / 3; border-radius: 6px; background: rgba(2, 56, 122, 0.07); }
-  .cards h3 { margin: 18px 0 6px; font: 600 14px/1.3 'Inter', system-ui, sans-serif; }
-  .cards p, .cols p { margin: 0; font: 400 14px/1.6 'Inter', system-ui, sans-serif; opacity: 0.75; }
-  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px 56px; }
   /* footer: a raked-up pile of leaves on the ground, and whatever falls onto it */
   .foot { position: relative; min-height: max(78vh, 460px); overflow: hidden; }
   .foot canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -296,30 +282,9 @@
 <!-- The rest of the site (projects, case studies) goes here. It sits on the same
      white the sky turns into, and scrolls up over the hero. -->
 <main class="site" id="site">
-  <!-- placeholder content, only here to give the page its length for now -->
-  <section class="block" id="work">
-    <h2>Selected work</h2>
-    <p class="lede">Placeholder. A short line about the kind of problems these projects deal with, and what ties them together.</p>
-    <ol class="cards">
-      <li><div class="thumb"></div><h3>Project title one</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
-      <li><div class="thumb"></div><h3>Project title two</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
-      <li><div class="thumb"></div><h3>Project title three</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
-      <li><div class="thumb"></div><h3>Project title four</h3><p>Placeholder. One or two sentences on the problem, the role, and what shipped.</p></li>
-    </ol>
-  </section>
-  <section class="block" id="about">
-    <h2>About</h2>
-    <p class="lede">Placeholder. A sentence that says who this is and how they like to work.</p>
-    <div class="cols">
-      <p>Placeholder paragraph. Background, the path from computer science to design, and the kind of teams and products worked on so far. Three or four sentences is plenty here.</p>
-      <p>Placeholder paragraph. What is interesting right now, things noticed on walks, and a line about what to reach out for. Three or four sentences is plenty here too.</p>
-    </div>
-  </section>
   <footer class="foot" id="foot">
     <canvas id="pile" aria-hidden="true"></canvas>
     <div class="footcopy">
-      <h2>Say hello</h2>
-      <p>Placeholder. Email, LinkedIn and a resume link go here.</p>
       <p>Mudra Nagda, 2026</p>
     </div>
   </footer>
