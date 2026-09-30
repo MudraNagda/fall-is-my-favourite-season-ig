@@ -10,9 +10,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #f5f1e4; }
-  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-  .cap { position: fixed; left: 0; right: 0; bottom: 18px; margin: 0; text-align: center;
-    font: italic 400 15px/1.4 'Instrument Serif', Georgia, serif; color: #3b4a2f; opacity: 0.6; pointer-events: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .cap { position: fixed; left: 0; right: 0; top: 14px; margin: 0; text-align: center;
+    font: italic 400 15px/1.4 'Instrument Serif', Georgia, serif; color: var(--fg, #3b4a2f); opacity: 0.6; pointer-events: none; }
+  .styles { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 10px; z-index: 5; }
+  .styles button { width: min(88px, 17vw); padding: 0; border: 0; border-radius: 12px; overflow: hidden; cursor: pointer; display: block;
+    box-shadow: 0 2px 10px rgba(40,30,10,0.18); outline: 2px solid rgba(255,255,255,0.7); transition: transform 0.15s ease; }
+  .styles button canvas { display: block; width: 100%; aspect-ratio: 1; }
+  .styles button span { display: block; padding: 0 0 6px; font: italic 400 14px/1.2 'Instrument Serif', Georgia, serif; }
+  .styles button:hover { transform: translateY(-3px); }
+  .styles button.on { transform: translateY(-6px); outline: 2.5px solid #222; }
   .ed { position: fixed; top: 12px; left: 12px; z-index: 10; width: 250px; max-height: calc(100vh - 24px); overflow: auto; display: none;
     background: rgba(22,22,24,0.92); color: #eee; border-radius: 14px; padding: 10px 12px; font: 500 11px/1.5 Inter, system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
   .ed.on { display: block; }
@@ -29,15 +36,20 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<p class="cap">cartwheel · space to pause, arrows to step, e to edit</p>
+<p class="cap">cartwheel · 1 to 5 switch style, space to pause, arrows to step, e to edit</p>
+<div class="styles" id="styles"></div>
 <div class="ed" id="ed"><h4>keys</h4><div class="keys" id="keys"></div><div id="sliders"></div><div class="row"><button id="addKey">+ key here</button><button id="delKey">delete</button></div><div class="row"><button id="copyKeys">copy KEYS</button><button id="resetKeys">reset</button></div><div class="hint">frame <span id="fr"></span> · t <span id="tt"></span><br>each key holds the pose at time t; poses blend between keys. rot is the whole-body turn, lean bends the waist, hop lifts her off the ground, arm/leg are spread from straight down (π = up). travel is automatic: the planted hand or foot stays put.</div></div>
 <script>
 // ---------- painting tools ----------
-// Every mark is a gouache dab: opaque, lumpy, a little too big for where it goes.
-// Strokes are allowed to spill past the edge of the shape they belong to.
+// Every mark is a dab, a dragged stroke or a limb outline. How a mark is laid down depends on the art style:
+// all of them end in fillPath(), which is the only place the styles differ.
 
 const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+const mainCtx = canvas.getContext('2d');
+let ctx = mainCtx;      // whatever surface is being painted right now (the page, a style card, a riso ink layer)
+let S = null;           // the current art style
+let PASS = null;        // riso only: which ink is being printed, 'p' pink or 'b' blue
+let LW = 1;             // line weight multiplier, raised for the small style cards
 let W = 0, H = 0, DPR = 1;
 let paper = null;
 
@@ -57,8 +69,106 @@ function rng(seed) {
 
 function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
 function vary(c, r, amt) { // paint that is not perfectly mixed
+  if (S.flat || c[0] !== '#') return c;
   const [R, G, B] = hexToRgb(c); const d = (r() - 0.5) * amt * 2;
   return `rgb(${Math.round(R + d * 18)},${Math.round(G + d * 10)},${Math.round(B - d * 14)})`;
+}
+
+// riso colours are written 'r:pink,yellow,blue' as percentages of each ink
+function inkAmt(color) { return +color.slice(2).split(',')[PASS.i] / 100; }
+// a colour for drawing lines directly (face, curls)
+function css(color, alpha = 1) {
+  if (S.mode !== 'riso') return color;
+  const [R, G, B] = hexToRgb(PASS.c);
+  return `rgba(${R},${G},${B},${inkAmt(color) * alpha})`;
+}
+function darken(c, k) { return '#' + hexToRgb(c).map(v => Math.round(v * k).toString(16).padStart(2, '0')).join(''); }
+
+// speckle tiles: grain for riso ink and cut paper, and the waxy gaps in crayon
+const tiles = {};
+function speckle(key, make) {
+  if (tiles[key]) return tiles[key];
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  make(c.getContext('2d'), rng(key.length * 131 + key.charCodeAt(key.length - 1)));
+  return (tiles[key] = mainCtx.createPattern(c, 'repeat'));
+}
+function grain(seedKey, density, alpha) {
+  return speckle('g' + seedKey, (g, r) => {
+    g.fillStyle = `rgba(0,0,0,${alpha})`;
+    for (let i = 0; i < 128 * 128 * density; i++) g.fillRect(r() * 128, r() * 128, 1 + r() * 1.6, 1 + r() * 1.6);
+  });
+}
+// a crayon colour: solid wax with paper flecks showing through and faint diagonal drag lines
+function wax(color) {
+  return speckle('w' + color, (g, r) => {
+    g.fillStyle = color; g.fillRect(0, 0, 128, 128);
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = 'rgba(0,0,0,0.85)';
+    for (let i = 0; i < 1500; i++) g.fillRect(r() * 128, r() * 128, 1 + r() * 1.8, 1 + r() * 1.2);
+    g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 1;
+    for (let d = -128; d < 128; d += 3 + r() * 3) { g.beginPath(); g.moveTo(d, 128); g.lineTo(d + 128, 0); g.stroke(); }
+  });
+}
+
+// lay down the current path in the current style. x, y, R roughly bound it; mark = a thin mark (stripe, edge) rather than a shape
+function fillPath(color, alpha, x, y, R, r, mark) {
+  const m = S.mode;
+  if (m === 'gouache') { ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fill(); }
+  else if (m === 'cut') {
+    // cut paper: flat colour, and each piece casts a soft shadow on the one below
+    ctx.globalAlpha = alpha < 0.6 ? alpha : 1; ctx.fillStyle = color;
+    if (!mark && alpha >= 0.6) { ctx.shadowColor = 'rgba(10,30,40,0.38)'; ctx.shadowBlur = 5 * DPR / LW; ctx.shadowOffsetX = 1.5 * DPR / LW; ctx.shadowOffsetY = 3 * DPR / LW; }
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+  }
+  else if (m === 'ink') {
+    // pen: everything is paper with a line round it, except what is inked solid (hair, stripes)
+    if (alpha < 0.6) return;
+    ctx.globalAlpha = 1;
+    if (mark) { ctx.fillStyle = S.ink; ctx.fill(); return; }
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = S.ink; ctx.lineWidth = 1.5 * LW; ctx.lineJoin = 'round'; ctx.stroke();
+  }
+  else if (m === 'crayon') {
+    // crayon: dense waxy colour with paper flecks, a darker line round it, and a few scribbled strokes on top
+    if (alpha < 0.6) { ctx.globalAlpha = alpha * 0.7; ctx.fillStyle = wax(color); ctx.fill(); return; }
+    ctx.save();
+    ctx.globalAlpha = 1; ctx.fillStyle = S.paper; ctx.fill();
+    ctx.fillStyle = wax(color); ctx.fill();
+    if (mark) { ctx.restore(); return; }
+    const dk = darken(color, 0.68);
+    ctx.globalAlpha = 0.85; ctx.strokeStyle = wax(dk); ctx.lineWidth = 2.2 * LW; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.clip();
+    ctx.lineCap = 'round'; ctx.strokeStyle = dk;
+    const c = Math.cos(-0.9), sn = Math.sin(-0.9), gap = 5 * LW;
+    for (let d = -R; d <= R; d += gap) {
+      const e = d + (r() - 0.5) * 3, a0 = -R * (0.5 + r() * 0.5), a1 = R * (0.5 + r() * 0.5);
+      ctx.globalAlpha = 0.1 + r() * 0.14; ctx.lineWidth = (1.6 + r() * 1.4) * LW;
+      ctx.beginPath(); ctx.moveTo(x + c * a0 - sn * e, y + sn * a0 + c * e); ctx.lineTo(x + c * a1 - sn * e, y + sn * a1 + c * e + (r() - 0.5) * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  else if (m === 'riso') {
+    // riso: each ink prints on its own layer. a shape knocks out what is under it, then prints its share of this ink
+    const amt = inkAmt(color) * (alpha < 0.6 ? alpha : 1);
+    if (alpha >= 0.6 && !mark) { ctx.globalCompositeOperation = 'destination-out'; ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fill(); ctx.globalCompositeOperation = 'source-over'; }
+    if (amt > 0) { ctx.globalAlpha = amt; ctx.fillStyle = PASS.c; ctx.fill(); }
+  }
+}
+
+// little drawn shapes for the crayon style
+function doodle(kind, x, y, sz, rot, color, r, alpha = 0.95) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.beginPath();
+  if (kind === 'heart') {
+    ctx.moveTo(0, sz * 0.9);
+    ctx.bezierCurveTo(-sz * 1.5, -sz * 0.2, -sz * 0.6, -sz * 1.2, 0, -sz * 0.35);
+    ctx.bezierCurveTo(sz * 0.6, -sz * 1.2, sz * 1.5, -sz * 0.2, 0, sz * 0.9);
+  } else {
+    for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2 - Math.PI / 2, d = sz * (i % 2 ? 0.48 : 1.1) * (1 + (r() - 0.5) * 0.12); i ? ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d) : ctx.moveTo(Math.cos(a) * d, Math.sin(a) * d); }
+  }
+  ctx.closePath();
+  fillPath(color, alpha, 0, 0, sz * 1.3, r);
+  ctx.restore();
 }
 
 // one lumpy dab, edges ragged like a loaded brush pressed down
@@ -66,22 +176,20 @@ function dab(x, y, rx, ry, ang, color, r, alpha = 1) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(ang);
   ctx.beginPath();
-  const n = 11;
+  const n = S.dabN || 11;
   for (let i = 0; i < n; i++) {
     const a = i / n * Math.PI * 2;
-    const k = 1 + (r() - 0.5) * 0.3;
+    const k = 1 + (r() - 0.5) * (S.wob ?? 0.3);
     const px = Math.cos(a) * rx * k, py = Math.sin(a) * ry * k;
     if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
   }
   ctx.closePath();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
-  ctx.fill();
+  fillPath(color, alpha, 0, 0, Math.max(rx, ry) * 1.3, r);
   ctx.restore();
 }
 
 // a dragged stroke: tapered, wobbling, thinning out at the end
-function stroke(ax, ay, bx, by, w, color, r, alpha = 1) {
+function stroke(ax, ay, bx, by, w, color, r, alpha = 1, mark = false) {
   const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len, ny = dx / len;
   const steps = Math.max(3, Math.round(len / 7));
@@ -98,7 +206,7 @@ function stroke(ax, ay, bx, by, w, color, r, alpha = 1) {
   ctx.beginPath();
   pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
   ctx.closePath();
-  ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fill();
+  fillPath(color, alpha, (ax + bx) / 2, (ay + by) / 2, len / 2 + w, r, mark);
   ctx.restore();
 }
 
@@ -111,7 +219,7 @@ function limbPath(ax, ay, bx, by, wa, wb, r) {
   const side = (sign, from, to) => {
     for (let i = 0; i <= steps; i++) {
       const u = from + (to - from) * i / steps;
-      const w = (wa + (wb - wa) * u) * 0.5 * (1 + (r() - 0.5) * 0.22);
+      const w = (wa + (wb - wa) * u) * 0.5 * (1 + (r() - 0.5) * (S.limbWob ?? 0.22));
       pts.push([ax + dx * u + nx * w * sign, ay + dy * u + ny * w * sign]);
     }
   };
@@ -132,9 +240,9 @@ function paintLimb(ax, ay, bx, by, wa, wb, pal, seed, opts = {}) {
   const nx = -dy / len, ny = dx / len;
   ctx.save();
   limbPath(ax, ay, bx, by, wa, wb, r);
-  ctx.fillStyle = vary(pal.base, r, 0.5);
-  ctx.fill();
+  fillPath(vary(pal.base, r, 0.5), 1, (ax + bx) / 2, (ay + by) / 2, len / 2 + Math.max(wa, wb) * 0.6, r);
   if (opts.stripes) {
+    limbPath(ax, ay, bx, by, wa, wb, rng(seed)); // same outline again, to keep the stripes inside it
     ctx.clip();
     const n = opts.stripes;
     for (let k = 0; k < n; k++) {
@@ -144,12 +252,13 @@ function paintLimb(ax, ay, bx, by, wa, wb, pal, seed, opts = {}) {
       for (let i = 1; i <= segs; i++) {
         const u = i / segs, w = wa + (wb - wa) * u;
         const qx = ax + dx * u + nx * (w * off + (r() - 0.5) * 3), qy = ay + dy * u + ny * (w * off + (r() - 0.5) * 3);
-        stroke(px, py, qx + dx / len * 5, qy + dy / len * 5, wa * 0.17 * (0.7 + r() * 0.6), vary(k % 2 ? pal.stripe2 : pal.stripe, r, 0.4), r, 0.9);
+        stroke(px, py, qx + dx / len * 5, qy + dy / len * 5, wa * 0.17 * (0.7 + r() * 0.6), vary(k % 2 ? pal.stripe2 : pal.stripe, r, 0.4), r, 0.9, true);
         px = qx; py = qy;
       }
     }
   }
   ctx.restore();
+  if (!S.shade) return;
   // shade and light, clipped to a slightly fatter outline so they only just spill over the edge
   ctx.save();
   limbPath(ax, ay, bx, by, wa * 1.12, wb * 1.12, rng(seed + 7));
@@ -170,10 +279,103 @@ function paintLimb(ax, ay, bx, by, wa, wb, pal, seed, opts = {}) {
   }
   ctx.restore();
   // one dry dark stroke along the shade side, not the whole way
-  if (r() < 0.8) {
+  if (S.edge && r() < 0.8) {
     const u0 = r() * 0.3, u1 = 0.6 + r() * 0.4;
     const w0 = (wa + (wb - wa) * u0) * 0.5, w1 = (wa + (wb - wa) * u1) * 0.5;
-    stroke(ax + dx * u0 + nx * w0 * 0.9, ay + dy * u0 + ny * w0 * 0.9, ax + dx * u1 + nx * w1 * 0.9, ay + dy * u1 + ny * w1 * 0.9, 3 + r() * 3, pal.edge, r, 0.5);
+    stroke(ax + dx * u0 + nx * w0 * 0.9, ay + dy * u0 + ny * w0 * 0.9, ax + dx * u1 + nx * w1 * 0.9, ay + dy * u1 + ny * w1 * 0.9, 3 + r() * 3, pal.edge, r, 0.5, true);
+  }
+}
+
+// ---------- garments ----------
+// the skeleton is only for motion. a garment is one continuous shape that runs along several bones,
+// bending smoothly through the joints, so no knee, elbow or waist seam shows.
+
+// a dense, corner-rounded centreline through the joints, with a width and a normal at every sample
+function chainLine(pts, ws) {
+  const C = [], n = pts.length, L = (a, b, t) => a + (b - a) * t;
+  for (let i = 0; i < n - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const t0 = i === 0 ? 0 : 0.3, t1 = i === n - 2 ? 1 : 0.7;
+    const steps = Math.max(2, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) * (t1 - t0) / 9));
+    for (let k = 0; k <= steps; k++) { const t = t0 + (t1 - t0) * k / steps; C.push({ x: L(a[0], b[0], t), y: L(a[1], b[1], t), w: L(ws[i], ws[i + 1], t) }); }
+    if (i < n - 2) { // ease round the joint
+      const c = pts[i + 2];
+      const p0 = [L(a[0], b[0], 0.7), L(a[1], b[1], 0.7)], p2 = [L(b[0], c[0], 0.3), L(b[1], c[1], 0.3)];
+      const w0 = L(ws[i], ws[i + 1], 0.7), w2 = L(ws[i + 1], ws[i + 2], 0.3);
+      for (let k = 1; k < 5; k++) {
+        const t = k / 5, m = 1 - t;
+        C.push({ x: m * m * p0[0] + 2 * m * t * b[0] + t * t * p2[0], y: m * m * p0[1] + 2 * m * t * b[1] + t * t * p2[1], w: L(w0, w2, t) });
+      }
+    }
+  }
+  let len = 0;
+  C.forEach((q, j) => {
+    const a = C[Math.max(0, j - 1)], b = C[Math.min(C.length - 1, j + 1)];
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    q.tx = dx / d; q.ty = dy / d; q.nx = -q.ty; q.ny = q.tx;
+    if (j) len += Math.hypot(q.x - C[j - 1].x, q.y - C[j - 1].y);
+    q.s = len;
+  });
+  C.len = len;
+  return C;
+}
+// the outline of a garment. capA / capB say how round each end is (1 = round, 0.3 = nearly flat, like a hem)
+function chainPath(C, r, k = 1, capA = 1, capB = 1) {
+  const pts = [], wob = S.limbWob ?? 0.22, last = C[C.length - 1], first = C[0];
+  for (const q of C) { const w = q.w * 0.5 * k * (1 + (r() - 0.5) * wob); pts.push([q.x + q.nx * w, q.y + q.ny * w]); }
+  for (let i = 1; i < 4; i++) { const a = i / 4 * Math.PI, w = last.w * 0.5 * k; pts.push([last.x + last.nx * w * Math.cos(a) + last.tx * w * Math.sin(a) * capB, last.y + last.ny * w * Math.cos(a) + last.ty * w * Math.sin(a) * capB]); }
+  for (let j = C.length - 1; j >= 0; j--) { const q = C[j], w = q.w * 0.5 * k * (1 + (r() - 0.5) * wob); pts.push([q.x - q.nx * w, q.y - q.ny * w]); }
+  for (let i = 1; i < 4; i++) { const a = Math.PI + i / 4 * Math.PI, w = first.w * 0.5 * k; pts.push([first.x + first.nx * w * Math.cos(a) + first.tx * w * Math.sin(a) * capA, first.y + first.ny * w * Math.cos(a) + first.ty * w * Math.sin(a) * capA]); }
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.closePath();
+}
+// paint a garment along its joints: base, stripes that follow the bend, then shade and light
+function paintChain(joints, ws, pal, seed, opts = {}) {
+  const r = rng(seed), C = chainLine(joints, ws);
+  const capA = opts.capA ?? 1, capB = opts.capB ?? 1;
+  const mid = C[C.length >> 1], R = C.len / 2 + Math.max(...ws) * 0.6;
+  ctx.save();
+  chainPath(C, r, 1, capA, capB);
+  fillPath(vary(pal.base, r, 0.5), 1, mid.x, mid.y, R, r);
+  if (opts.stripes) {
+    chainPath(C, rng(seed), 1, capA, capB); // same outline again, to keep the stripes inside it
+    ctx.clip();
+    const n = opts.stripes;
+    for (let k = 0; k < n; k++) {
+      const off = ((k + 0.5) / n - 0.5) * 0.95 + (r() - 0.5) * 0.08;
+      const at = q => [q.x + q.nx * (q.w * off + (r() - 0.5) * 3), q.y + q.ny * (q.w * off + (r() - 0.5) * 3)];
+      let prev = [C[0].x + C[0].nx * C[0].w * off - C[0].tx * 5, C[0].y + C[0].ny * C[0].w * off - C[0].ty * 5];
+      for (let j = 2; j < C.length + 2; j += 2) {
+        const q = C[Math.min(j, C.length - 1)], cur = at(q);
+        stroke(prev[0], prev[1], cur[0] + q.tx * 5, cur[1] + q.ty * 5, ws[0] * 0.17 * (0.7 + r() * 0.6), vary(k % 2 ? pal.stripe2 : pal.stripe, r, 0.4), r, 0.9, true);
+        prev = cur;
+      }
+    }
+  }
+  ctx.restore();
+  if (!S.shade) return;
+  // shade and light, clipped to a slightly fatter outline so they only just spill over the edge
+  ctx.save();
+  chainPath(C, rng(seed + 7), 1.12, capA, capB);
+  ctx.clip();
+  const nd = Math.max(2, Math.round(C.len / 16));
+  const pick = u => C[Math.max(0, Math.min(C.length - 1, Math.round(u * (C.length - 1))))];
+  for (let i = 0; i < nd; i++) {
+    const q = pick((i + 0.4) / nd + (r() - 0.5) * 0.1), off = q.w * (0.26 + r() * 0.16);
+    dab(q.x + q.nx * off, q.y + q.ny * off, 8 + r() * 9, q.w * 0.28, Math.atan2(q.ty, q.tx) + (r() - 0.5) * 0.3, vary(pal.shade, r, 0.5), r, 0.78);
+  }
+  for (let i = 0; i < nd; i++) {
+    if (r() < 0.35) continue;
+    const q = pick((i + 0.6) / nd), off = -q.w * (0.2 + r() * 0.2);
+    dab(q.x + q.nx * off, q.y + q.ny * off, 7 + r() * 8, q.w * 0.2, Math.atan2(q.ty, q.tx) + (r() - 0.5) * 0.35, vary(pal.light, r, 0.5), r, 0.7);
+  }
+  ctx.restore();
+  // dry dark strokes along the shade side, following the bend
+  if (S.edge) for (let j = 1 + Math.floor(r() * 3); j < C.length - 4; j += 4) {
+    if (r() < 0.3) continue;
+    const a = C[j], b = C[Math.min(C.length - 1, j + 4)];
+    stroke(a.x + a.nx * a.w * 0.45, a.y + a.ny * a.w * 0.45, b.x + b.nx * b.w * 0.45, b.y + b.ny * b.w * 0.45, 3 + r() * 3, pal.edge, r, 0.5, true);
   }
 }
 
@@ -181,19 +383,99 @@ function paintLimb(ax, ay, bx, by, wa, wb, pal, seed, opts = {}) {
 function paintBlob(x, y, rx, ry, ang, pal, seed, count = 6) {
   const r = rng(seed);
   dab(x, y, rx, ry, ang, vary(pal.base, r, 0.4), r);
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; S.shade && i < count; i++) {
     const a = r() * Math.PI * 2, d = r() * 0.5;
     const c = i % 3 === 0 ? pal.light : pal.shade;
     dab(x + Math.cos(a) * rx * d, y + Math.sin(a) * ry * d, rx * (0.35 + r() * 0.4), ry * (0.3 + r() * 0.35), a, vary(c, r, 0.5), r, 0.72);
   }
 }
 
-// ---------- palettes ----------
-const SKIN = { base: '#e6b394', shade: '#d18f72', light: '#f2cdb3', edge: '#b9735a' };
-const PANTS = { base: '#eaede6', shade: '#c3cfd6', light: '#f8f8f2', edge: '#6d7f9c', stripe: '#3f5ba6', stripe2: '#6079c0' };
-const SHIRT = { base: '#f3f3ec', shade: '#bfcbd6', light: '#fbfbf7', edge: '#8c9bab' };
-const HAIR = { base: '#6d4527', shade: '#432712', light: '#96633a', edge: '#3a2210' };
-const GRASS = ['#c9cf6a', '#a8bd58', '#7ea54f', '#dfe082', '#b5c95e'];
+// ---------- art styles ----------
+// each style is a way of laying down a mark (mode) plus its own paper and palette
+let SKIN, PANTS, SHIRT, HAIR, GRASS, FACE, PETALS, SHADOW;
+const one = c => ({ base: c, shade: c, light: c, edge: c });
+const INK = '#26221d', INKP = '#f7f3e8';
+const STYLES = [
+  { name: 'gouache', mode: 'gouache', paper: '#f5f1e4', fg: '#3b4a2f', shade: true, edge: true, pal: {
+    SKIN: { base: '#e6b394', shade: '#d18f72', light: '#f2cdb3', edge: '#b9735a' },
+    PANTS: { base: '#eaede6', shade: '#c3cfd6', light: '#f8f8f2', edge: '#6d7f9c', stripe: '#3f5ba6', stripe2: '#6079c0' },
+    SHIRT: { base: '#f3f3ec', shade: '#bfcbd6', light: '#fbfbf7', edge: '#8c9bab' },
+    HAIR: { base: '#6d4527', shade: '#432712', light: '#96633a', edge: '#3a2210', curl: '#432712' },
+    GRASS: ['#c9cf6a', '#a8bd58', '#7ea54f', '#dfe082', '#b5c95e'],
+    FACE: { cheek: '#e98f86', line: '#4a2a1c', mouth: '#8c3b34' },
+    PETALS: ['#ef9fb8', '#f6d65a', '#e2738f', '#a8bd58', '#f4b183'], SHADOW: '#8a9a4a' } },
+  { name: 'ink', mode: 'ink', paper: INKP, fg: INK, ink: INK, flat: true, wob: 0.22, limbWob: 0.14, pal: {
+    SKIN: one(INKP), PANTS: { ...one(INKP), stripe: INK, stripe2: INK }, SHIRT: one(INKP),
+    HAIR: { ...one(INK), curl: INKP },
+    GRASS: [INKP, INKP, INKP, INKP, INKP],
+    FACE: { cheek: INKP, line: INK, mouth: INK },
+    PETALS: [INKP, INKP, INK, INKP, INKP], SHADOW: INKP } },
+  { name: 'cut paper', mode: 'cut', paper: '#a9d9f0', fg: '#1d4a5c', flat: true, dabN: 20, wob: 0.06, limbWob: 0.04, grain: true, clouds: true, grass: 2.1, pal: {
+    SKIN: { base: '#e0946a', shade: '#d07f55', light: '#eaa57c', edge: '#d07f55' },
+    PANTS: { ...one('#fbf5e6'), stripe: '#2a5db0', stripe2: '#2a5db0' },
+    SHIRT: one('#f7c948'),
+    HAIR: { base: '#5a3a22', shade: '#4a2e1a', light: '#6d4a2c', edge: '#4a2e1a', curl: '#3a2414' },
+    GRASS: ['#3f9b4f', '#2f7f4a', '#57b368', '#2f8f7a', '#7cc47a'],
+    FACE: { cheek: '#e2604f', line: '#3a2414', mouth: '#8c2f2a' },
+    PETALS: ['#ff8fab', '#ffd166', '#ffffff', '#ef476f', '#f4a261'], SHADOW: '#1f5f3a' } },
+  { name: 'crayon', mode: 'crayon', paper: '#fffdf6', fg: '#4a3a2a', flat: true, wob: 0.3, limbWob: 0.2, doodles: true, pal: {
+    SKIN: { base: '#f4b08a', shade: '#ea9a72', light: '#f8c3a2', edge: '#ea9a72' },
+    PANTS: { ...one('#dbe6fa'), stripe: '#2f6fe0', stripe2: '#4a86ee' },
+    SHIRT: one('#ffd84a'),
+    HAIR: { base: '#8a5426', shade: '#6d3f18', light: '#a86a34', edge: '#6d3f18', curl: '#4a2a10' },
+    GRASS: ['#6cc24a', '#3fae4f', '#9bd65a', '#f2dd4a', '#57b85a'],
+    FACE: { cheek: '#ff8f8f', line: '#4a2a1c', mouth: '#e0443a' },
+    PETALS: ['#ff5f9e', '#ffc62e', '#ff8a1f', '#4db8ff', '#b06bff'], SHADOW: '#9acb6a' } },
+  { name: 'riso', mode: 'riso', paper: '#fbf5dc', fg: '#e8308a', flat: true, dabN: 16, wob: 0.1, limbWob: 0.08, grass: 1.5,
+    inks: [{ i: 1, c: '#ffe100', off: [0, 0], g: 0.045 }, { i: 0, c: '#ff4fa8', off: [2, -1.2], g: 0.06 }, { i: 2, c: '#2db4e0', off: [-1.2, 1.6], g: 0.06 }], pal: {
+    // pink, yellow, blue. pink + yellow = orange, pink + blue = purple, yellow + blue = green
+    SKIN: { base: 'r:32,55,0', shade: 'r:50,60,0', light: 'r:22,45,0', edge: 'r:50,60,0' },
+    PANTS: { base: 'r:100,0,0', shade: 'r:100,0,0', light: 'r:100,0,0', edge: 'r:100,0,50', stripe: 'r:0,0,100', stripe2: 'r:0,0,100' },
+    SHIRT: one('r:0,100,0'),
+    HAIR: { base: 'r:100,0,100', shade: 'r:100,0,100', light: 'r:100,0,70', edge: 'r:100,0,100', curl: 'r:100,0,100' },
+    GRASS: ['r:0,100,70', 'r:0,100,40', 'r:0,0,80', 'r:100,0,0', 'r:0,100,100'],
+    FACE: { cheek: 'r:90,20,0', line: 'r:100,0,100', mouth: 'r:100,60,0' },
+    PETALS: ['r:100,0,0', 'r:100,100,0', 'r:0,0,100', 'r:0,100,0', 'r:100,0,100'], SHADOW: 'r:0,0,45' } },
+];
+function setStyle(st) {
+  S = st;
+  ({ SKIN, PANTS, SHIRT, HAIR, GRASS, FACE, PETALS, SHADOW } = st.pal);
+}
+setStyle(STYLES[0]);
+
+// paint something in the current style onto a surface. riso prints two ink layers and lays them down out of register
+const layers = {};
+function layer(key, w, h) {
+  const c = layers[key] || (layers[key] = document.createElement('canvas'));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return c;
+}
+function renderStyled(target, draw) {
+  const w = target.canvas.width, h = target.canvas.height;
+  if (S.mode !== 'riso') {
+    ctx = target; draw(); ctx = mainCtx;
+    if (S.grain) { // paper fibre over everything
+      target.save(); target.setTransform(1, 0, 0, 1, 0, 0); target.globalAlpha = 1;
+      target.fillStyle = grain('paper', 0.22, 0.07); target.fillRect(0, 0, w, h);
+      target.restore();
+    }
+    return;
+  }
+  const u = Math.max(1, w / 360);
+  for (const ink of S.inks) {
+    const g = layer('ink' + ink.i + w, w, h).getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, w, h);
+    ctx = g; PASS = ink; draw();
+    // grainy ink: speckle bites out of the layer
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = grain('ink' + ink.i, ink.g, 0.9); g.fillRect(0, 0, w, h);
+    g.globalCompositeOperation = 'source-over';
+  }
+  PASS = null; ctx = mainCtx;
+  target.save(); target.setTransform(1, 0, 0, 1, 0, 0); target.globalAlpha = 0.93; target.globalCompositeOperation = 'multiply';
+  for (const ink of S.inks) target.drawImage(layer('ink' + ink.i + w, w, h), ink.off[0] * u, ink.off[1] * u);
+  target.restore();
+}
 
 // ---------- the figure, seen from the front ----------
 const L = { torso: 70, neck: 8, head: 22, ua: 36, fa: 34, th: 50, sh: 48, hipW: 9, shW: 20 };
@@ -273,24 +555,21 @@ function drawFigure(sk, frame, p) {
   const grounded = i => p.hop > 2 ? 0 : Math.max(0, Math.min(1, 1 - (con.lowest - con.pts[i][1]) / 12));
   const leg = (lg, seed, side, idx) => {
     // wide-leg trousers that flare at the hem
-    paintLimb(lg.h[0], lg.h[1], lg.k[0], lg.k[1], 30, 27, PANTS, seed + 1, { stripes: 4 });
-    paintLimb(lg.k[0], lg.k[1], lg.f[0], lg.f[1], 27, 33, PANTS, seed + 2, { stripes: 4 });
+    paintChain([lg.h, lg.k, lg.f], [30, 27, 33], PANTS, seed + 1, { stripes: 4, capB: 0.3 });
     // foot: pointed along the shin in the air, flat and turned out on the ground
     const g = grounded(idx), flat = (side > 0 ? 0.12 : Math.PI - 0.12) - p.rot;
     const dx = Math.cos(lg.a) * (1 - g) + Math.cos(flat) * g, dy = Math.sin(lg.a) * (1 - g) + Math.sin(flat) * g;
     const fa = Math.atan2(dy, dx), r = rng(seed + 5);
     const [ax, ay] = fwd(lg.f[0], lg.f[1], lg.a, 5);         // ankle, poking out of the hem
     const [tx, ty] = fwd(ax, ay, fa, 19);                     // ball of the foot
-    dab(ax, ay, 7, 6.5, fa, vary(SKIN.shade, r, 0.3), r);     // heel
-    paintLimb(ax, ay, tx, ty, 11, 13, SKIN, seed + 3);
+    paintLimb(ax - Math.cos(fa) * 3, ay - Math.sin(fa) * 3, tx, ty, 12, 13, SKIN, seed + 3);
     for (let i = 0; i < 4; i++) {                             // toes, big toe first
       const o = (i - 1.5) * 3.4 * side, sz = i === 0 ? 3.4 : 2.6 - i * 0.2;
       dab(tx + Math.cos(fa) * (5 - i * 0.8) - Math.sin(fa) * o, ty + Math.sin(fa) * (5 - i * 0.8) + Math.cos(fa) * o, sz + 0.6, sz, fa, vary(i % 2 ? SKIN.base : SKIN.light, r, 0.3), r);
     }
   };
   const arm = (ar, seed, side, idx) => {
-    paintLimb(ar.s[0], ar.s[1], ar.e[0], ar.e[1], 21, 17, SHIRT, seed + 1);
-    paintLimb(ar.e[0], ar.e[1], ar.h[0], ar.h[1], 16, 13, SHIRT, seed + 2);
+    paintChain([ar.s, ar.e, ar.h], [21, 17, 14], SHIRT, seed + 1, { capB: 0.3 });
     // hand: a palm, four fingers and a thumb. fingers spread wide when the hand is planted
     const a = Math.atan2(ar.h[1] - ar.e[1], ar.h[0] - ar.e[0]), r = rng(seed + 5);
     const g = grounded(idx), splay = 0.16 + 0.16 * g;
@@ -312,8 +591,7 @@ function drawFigure(sk, frame, p) {
   const ux = Math.cos(sk.up), uy = Math.sin(sk.up);
   const inv = Math.max(0, gx * ux + gy * uy); // 0 upright, 1 upside down
   // blouse: wide, a little billowy
-  paintLimb(sk.hip[0], sk.hip[1], sk.waist[0], sk.waist[1], 44, 47, SHIRT, f + 30);
-  paintLimb(sk.waist[0], sk.waist[1], sk.sh[0], sk.sh[1], 47, 52, SHIRT, f + 31);
+  paintChain([sk.hip, sk.waist, sk.sh], [46, 47, 52], SHIRT, f + 30, { capA: 0.3, capB: 0.6 });
   arm(sk.armL, f + 10, -1, 2);
   arm(sk.armR, f + 15, 1, 3);
   paintLimb(sk.sh[0], sk.sh[1], sk.neck[0], sk.neck[1], 14, 12, SKIN, f + 50);
@@ -340,12 +618,12 @@ function drawFigure(sk, frame, p) {
     const r = rng(f + 55);
     ctx.save();
     ctx.translate(hx, hy); ctx.rotate(up + DOWN);
-    dab(-11, 7, 5.5, 4, 0, '#e98f86', r, 0.55);
-    dab(11, 7, 5.5, 4, 0, '#e98f86', r, 0.55);
-    ctx.strokeStyle = '#4a2a1c'; ctx.lineWidth = 1.8; ctx.lineCap = 'round'; ctx.globalAlpha = 0.9;
+    dab(-11, 7, 5.5, 4, 0, FACE.cheek, r, 0.55);
+    dab(11, 7, 5.5, 4, 0, FACE.cheek, r, 0.55);
+    ctx.strokeStyle = css(FACE.line, 0.9); ctx.lineWidth = 1.8 * LW; ctx.lineCap = 'round'; ctx.globalAlpha = S.mode === 'riso' ? 1 : 0.9;
     for (const sx of [-7.5, 7.5]) { ctx.beginPath(); ctx.arc(sx, 3.5, 3.2, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
     ctx.beginPath(); ctx.arc(0, 9, 6, 0.05, Math.PI - 0.05); ctx.closePath();
-    ctx.fillStyle = '#8c3b34'; ctx.fill();
+    ctx.fillStyle = css(FACE.mouth); ctx.fill();
     ctx.restore();
   }
   // hair, front layer: fringe and curls at the cheeks, little round dabs with a hooked line
@@ -353,7 +631,7 @@ function drawFigure(sk, frame, p) {
     const r = rng(f + 61);
     const curl = (x, y, s, c) => {
       dab(x, y, s, s * 0.85, r() * 3, vary(c, r, 0.35), r, 0.95);
-      ctx.save(); ctx.strokeStyle = HAIR.shade; ctx.lineWidth = 1.6; ctx.lineCap = 'round'; ctx.globalAlpha = 0.6;
+      ctx.save(); ctx.strokeStyle = css(HAIR.curl, 0.6); ctx.lineWidth = 1.6 * LW; ctx.lineCap = 'round'; ctx.globalAlpha = S.mode === 'riso' ? 1 : 0.6;
       const a0 = r() * Math.PI * 2;
       ctx.beginPath(); ctx.arc(x, y, s * 0.55, a0, a0 + 3.2); ctx.stroke(); ctx.restore();
     };
@@ -378,10 +656,10 @@ function makePaper() {
   paper.width = canvas.width; paper.height = canvas.height;
   const g = paper.getContext('2d');
   g.scale(DPR, DPR);
-  g.fillStyle = '#f5f1e4'; g.fillRect(0, 0, W, H);
+  g.fillStyle = S.paper; g.fillRect(0, 0, W, H);
   const r = rng(4242);
   for (let i = 0; i < W * H / 90; i++) {
-    g.fillStyle = r() < 0.5 ? 'rgba(120,100,60,0.05)' : 'rgba(255,255,255,0.35)';
+    g.fillStyle = r() < 0.5 ? 'rgba(120,100,60,0.05)' : (S.mode === 'cut' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.35)');
     g.fillRect(r() * W, r() * H, 1 + r() * 1.5, 1 + r() * 1.5);
   }
 }
@@ -417,14 +695,16 @@ function travelAt(f) {
 
 function render() {
   if (!paper) makePaper();
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.drawImage(paper, 0, 0, W, H);
+  mainCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  mainCtx.globalAlpha = 1;
+  mainCtx.drawImage(paper, 0, 0, W, H);
 
   const t = (frame % CYCLE) / CYCLE;
   const p = poseAt(t);
   const sk = skeleton(p);
-  const scale = Math.min(1.4, Math.min(W, H) / 420);
-  const groundY = H * 0.5 + 150 * scale;
+  const room = H - 130; // the style cards sit along the bottom
+  const scale = Math.min(1.4, Math.min(W, room) / 420);
+  const groundY = room * 0.5 + 150 * scale + 10;
   const cx = W * 0.5;
 
   // rotate about the belly, then drop the figure until its lowest hand or foot touches the ground
@@ -436,44 +716,99 @@ function render() {
   // the camera follows her, so the grass slides by instead.
   const fc = frame % CYCLE;
   const drift = Math.floor(frame / CYCLE) * travelAt(CYCLE) + travelAt(fc);
-  {
-    const r = rng(9);
-    for (let i = 0; i < 14; i++) {
-      const gx = (((r() * 900 - drift) % 900) + 900) % 900 - 450;
-      const y = groundY + (r() - 0.4) * 22 * scale;
-      dab(cx + gx * scale, y, (18 + r() * 24) * scale, (4 + r() * 5) * scale, (r() - 0.5) * 0.3, GRASS[i % 5], r, 0.9);
-    }
-    const rs = rng((frame >> 1) + 500);
-    const air = Math.min(1, hop / 60);
-    dab(cx, groundY + 4 * scale, (44 - 16 * air) * scale, (8 - 3 * air) * scale, 0, '#8a9a4a', rs, 0.3 - 0.12 * air);
-  }
-  // petals and bits of grass thrown up where her hand lands and where she jumps
-  const burst = (tEmit, n, seed, power) => {
-    const fe = Math.round(tEmit * CYCLE), age = fc - fe;
-    if (age < 0 || age > 20) return;
-    const r = rng(seed + Math.floor(frame / CYCLE) * 13);
-    const x0 = travelAt(fe) - travelAt(fc);
-    const cols = ['#ef9fb8', '#f6d65a', '#e2738f', '#a8bd58', '#f4b183'];
-    for (let i = 0; i < n; i++) {
-      const vx = (r() - 0.5) * 12 * power, vy = (6 + r() * 8) * power, spin = r() * 6, c = cols[i % 5], sz = 6 + r() * 5;
-      const px = x0 + (r() - 0.5) * 40 + vx * age, py = vy * age - 0.4 * age * age;
-      if (py < 0) continue;
-      dab(cx + px * scale, groundY - py * scale, sz * scale, sz * 0.6 * scale, spin + age * 0.5, c, r, 0.95);
-    }
-  };
-  burst(0.25, 10, 71, 0.9);
-  burst(0.41, 8, 72, 0.8);
-  burst(0.63, 12, 73, 1.0);
 
-  ctx.save();
-  ctx.translate(cx, groundY - (lowest - lift + hop) * scale);
-  ctx.scale(scale, scale);
-  ctx.rotate(p.rot);
-  ctx.translate(-PIVOT[0], -PIVOT[1]);
-  drawFigure(sk, frame, p);
-  ctx.restore();
+  renderStyled(mainCtx, () => {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (S.clouds) { // cut paper: a scalloped white cloud along the top
+      const r = rng(31);
+      for (let x = -40; x < W + 80; x += 95) dab(x + r() * 30, -18 + r() * 14, 70 + r() * 20, 62 + r() * 14, 0, '#ffffff', r);
+    }
+    if (S.doodles) { // crayon: a smiling sun, and hearts and stars in the air
+      const r = rng(41 + (frame >> 2));
+      const sx = Math.min(W * 0.16, 150), sy = 96, sr = 30;
+      for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2 + 0.1; stroke(sx + Math.cos(a) * (sr + 7), sy + Math.sin(a) * (sr + 7), sx + Math.cos(a) * (sr + 22), sy + Math.sin(a) * (sr + 22), 6, '#ffb52e', r, 1, true); }
+      dab(sx, sy, sr, sr, 0, '#ffd83a', r);
+      dab(sx - 14, sy + 6, 6, 4.5, 0, '#ff8f8f', r, 0.5); dab(sx + 14, sy + 6, 6, 4.5, 0, '#ff8f8f', r, 0.5);
+      ctx.save(); ctx.strokeStyle = '#6d3f18'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      for (const ex of [-10, 10]) { ctx.beginPath(); ctx.arc(sx + ex, sy - 3, 3.5, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(sx, sy + 5, 9, 0.25, Math.PI - 0.25); ctx.stroke(); ctx.restore();
+      const q = rng(43);
+      for (let i = 0; i < 9; i++) {
+        const dx = W * (0.08 + q() * 0.84), dy = 70 + q() * Math.max(60, groundY - 330 * scale - 60), sz = 8 + q() * 7;
+        if (Math.abs(dx - sx) < 70 && dy < 170) continue;
+        doodle(i % 2 ? 'heart' : 'star', dx, dy, sz, (q() - 0.5) * 0.6, PETALS[i % 5], r);
+      }
+    }
+    {
+      const r = rng(9), gs = S.grass || 1;
+      for (let i = 0; i < 14; i++) {
+        const gx = (((r() * 900 - drift) % 900) + 900) % 900 - 450;
+        const y = groundY + (r() - 0.4) * 22 * scale + (gs - 1) * 8 * scale;
+        dab(cx + gx * scale, y, (18 + r() * 24) * scale * gs, (4 + r() * 5) * scale * gs, (r() - 0.5) * 0.3, GRASS[i % 5], r, 0.9);
+      }
+      const rs = rng((frame >> 1) + 500);
+      const air = Math.min(1, hop / 60);
+      dab(cx, groundY + 4 * scale, (44 - 16 * air) * scale, (8 - 3 * air) * scale, 0, SHADOW, rs, 0.3 - 0.12 * air);
+    }
+    // petals and bits of grass thrown up where her hands and feet land
+    const burst = (tEmit, n, seed, power) => {
+      const fe = Math.round(tEmit * CYCLE), age = fc - fe;
+      if (age < 0 || age > 20) return;
+      const r = rng(seed + Math.floor(frame / CYCLE) * 13);
+      const x0 = travelAt(fe) - travelAt(fc);
+      for (let i = 0; i < n; i++) {
+        const vx = (r() - 0.5) * 12 * power, vy = (6 + r() * 8) * power, spin = r() * 6, c = PETALS[i % 5], sz = 6 + r() * 5;
+        const px = x0 + (r() - 0.5) * 40 + vx * age, py = vy * age - 0.4 * age * age;
+        if (py < 0) continue;
+        if (S.doodles) doodle(i % 2 ? 'heart' : 'star', cx + px * scale, groundY - py * scale, sz * 0.9 * scale, spin * 0.2 + age * 0.15, c, r);
+        else dab(cx + px * scale, groundY - py * scale, sz * scale, sz * 0.6 * scale, spin + age * 0.5, c, r, 0.95);
+      }
+    };
+    burst(0.25, 10, 71, 0.9);
+    burst(0.41, 8, 72, 0.8);
+    burst(0.63, 12, 73, 1.0);
+
+    ctx.save();
+    ctx.translate(cx, groundY - (lowest - lift + hop) * scale);
+    ctx.scale(scale, scale);
+    ctx.rotate(p.rot);
+    ctx.translate(-PIVOT[0], -PIVOT[1]);
+    drawFigure(sk, frame, p);
+    ctx.restore();
+  });
 }
 
+// ---------- style cards ----------
+// each card is a small live painting of her mid-cartwheel in that style
+const cards = document.getElementById('styles');
+function chooseStyle(i) {
+  setStyle(STYLES[i]);
+  paper = null;
+  document.body.style.background = S.paper;
+  document.documentElement.style.setProperty('--fg', S.fg);
+  [...cards.children].forEach((b, j) => b.classList.toggle('on', j === i));
+  try { localStorage.setItem('cartwheel-style', S.name); } catch (e) {}
+  render();
+}
+function buildCards() {
+  cards.innerHTML = '';
+  const p = poseAt(0.45), sk = skeleton(p), px = 88 * DPR;
+  STYLES.forEach((st, i) => {
+    const b = document.createElement('button'), cv = document.createElement('canvas'), lab = document.createElement('span');
+    cv.width = cv.height = px; lab.textContent = st.name;
+    b.style.background = st.paper; b.style.color = st.fg; b.title = st.name;
+    b.append(cv, lab); b.onclick = () => chooseStyle(i); cards.appendChild(b);
+    const g = cv.getContext('2d'), prev = S, k = px / 285;
+    setStyle(st); LW = 2.2;
+    g.fillStyle = st.paper; g.fillRect(0, 0, px, px);
+    renderStyled(g, () => {
+      ctx.setTransform(k, 0, 0, k, px / 2, px * 0.54);
+      ctx.rotate(p.rot); ctx.translate(-PIVOT[0], -PIVOT[1]);
+      drawFigure(sk, 0, p);
+    });
+    LW = 1; setStyle(prev);
+  });
+}
 
 // ---------- pose editor (press E) ----------
 const PARAMS = [
@@ -525,8 +860,15 @@ window.addEventListener('keydown', e => {
   if (e.code === 'ArrowLeft') { paused = true; frame = Math.max(0, frame - 1); render(); }
   if (e.code === 'KeyE') { ed.classList.toggle('on'); if (ed.classList.contains('on')) buildEditor(); }
   if (ed.classList.contains('on')) buildEditor();
+  const n = +e.key;
+  if (n >= 1 && n <= STYLES.length) chooseStyle(n - 1);
 });
-render();
+buildCards();
+{
+  let start = 0;
+  try { start = Math.max(0, STYLES.findIndex(st => st.name === localStorage.getItem('cartwheel-style'))); } catch (e) {}
+  chooseStyle(start);
+}
 requestAnimationFrame(loop);
 </script>
 </body>
