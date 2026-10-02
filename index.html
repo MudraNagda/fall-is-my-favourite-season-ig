@@ -126,6 +126,9 @@
   }
   .msg .sub { display: block; }   /* the second line, same size and weight as the first */
   .msg.show { opacity: 1; transform: scale(1); }
+  /* the words are drawn inside the scene now (see "words and loose leaves inside the scene"),
+     so leaves, branches and clouds can pass in front of them; this copy is only read, never seen */
+  .msg, .msg.show { opacity: 0 !important; transition: none !important; }
   @media (prefers-reduced-motion: reduce) {
     .msg { transform: none; transition: opacity 0.5s ease; }
   }
@@ -1059,10 +1062,13 @@ const smoother = (x) => { const k = Math.min(1, Math.max(0, x)); return k * k * 
 // The sky no longer washes to white: the page below is laid straight on the blue.
 // (The wash machinery is kept, held at zero, in case it is wanted back.)
 const washProgress = () => 0;
+const words = { html: '', shownAt: null, hiddenAt: null };
 function say(html) {
-  if (!html) { msg.classList.remove('show'); return; }
+  if (!html) { msg.classList.remove('show'); if (words.shownAt !== null) { words.hiddenAt = clock.getElapsedTime(); words.shownAt = null; } return; }
   msg.innerHTML = html;
   msg.classList.add('show');
+  words.html = html; words.shownAt = clock.getElapsedTime(); words.hiddenAt = null;
+  paintWords();
 }
 // white over blue sky, darkening to black as the sky washes out
 // white over the blue sky, settling into a deeper shade of that same blue on the wash
@@ -1352,6 +1358,7 @@ function generated(ctx) {
 
 function resize() {
   const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  if (words.html) paintWords();   // the measure of the words follows the window
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   // keep the wide-lens feel on portrait screens
@@ -2087,19 +2094,28 @@ function flyLeaves(t, dt, aboveTrees) {
     // the other turns away, narrows and falls into shade.
     const theta = Math.sin(t * L.turnHz + L.spin) * L.turn;
     const kl = Math.cos(theta + L.fold), kr = Math.cos(theta - L.fold);
-    lctx.save();
-    lctx.translate(L.x, L.y);
-    lctx.rotate(roll);
-    const fade = Math.min(1, (t - L.born) * 2), half = size / 2;
-    const halves = [[0, -half * kl, half * kl + 0.6, kl], [64, 0, half * kr, kr]]; // [source x, dest x, dest width, facing]
+    if (!L.s3) L.s3 = leafSprite3d(L);
+    const c3 = L.s3.ctx, D = LEAF_DRAW, halfD = D / 2;
+    c3.setTransform(1, 0, 0, 1, 0, 0);
+    c3.clearRect(0, 0, LEAF_PX, LEAF_PX);
+    c3.translate(LEAF_PX / 2, LEAF_PX / 2);
+    c3.rotate(roll);
+    const fade = Math.min(1, (t - L.born) * 2);
+    const halves = [[0, -halfD * kl, halfD * kl + 0.6, kl], [64, 0, halfD * kr, kr]]; // [source x, dest x, dest width, facing]
     for (const [sx, dx, dw, k] of halves) {
-      lctx.globalAlpha = fade;
-      lctx.drawImage(L.sprite.base, sx, 0, 64, 128, dx, -half, dw, size);
-      lctx.globalAlpha = fade * Math.min(0.5, (1 - k) * 4);
-      lctx.drawImage(L.sprite.dark, sx, 0, 64, 128, dx, -half, dw, size);
+      c3.globalAlpha = 1;
+      c3.drawImage(L.sprite.base, sx, 0, 64, 128, dx, -halfD, dw, D);
+      c3.globalAlpha = Math.min(0.5, (1 - k) * 4);
+      c3.drawImage(L.sprite.dark, sx, 0, 64, 128, dx, -halfD, dw, D);
     }
-    lctx.restore();
+    L.s3.tex.needsUpdate = true;
+    L.s3.sp.material.opacity = fade;
+    placeAhead(L.s3.sp, L.x, L.y, L.s3.d);
+    const px = (size * LEAF_PX) / D, u3 = unitsPerPx(L.s3.d);
+    L.s3.sp.scale.set(px * u3, px * u3, 1);
   }
+  // sprites of leaves that are gone
+  for (const sp of camera.children.slice()) if (sp.isSprite && !looseLeaves.some((L) => L.s3 && L.s3.sp === sp)) { camera.remove(sp); sp.material.map.dispose(); sp.material.dispose(); }
 }
 
 // ---- film grain on the white page ---------------------------------------------
@@ -2274,10 +2290,96 @@ function drawStage(t) {
   U.uGrainOff.value.set(grainShift.x, grainShift.y);
   renderer.render(postScene, postCam);
 }
+// ---- words and loose leaves inside the scene --------------------------------------
+// The two lines of words, and the loose leaves, are drawn inside the 3D scene as
+// children of the camera, so they hold their place on screen while the canopy,
+// the branches and the clouds pass in front of or behind them. The words hang
+// a fixed way ahead of the lens; each loose leaf is either a little nearer than
+// the words or a little farther, so some cross in front of them and some behind.
+scene.add(camera);
+const WORDS_D = 60, LEAF_NEAR_D = 42, LEAF_FAR_D = 85;
+const wordsCanvas = document.createElement('canvas');
+let wordsTex = null;   // made fresh whenever the canvas changes size: a GPU texture keeps the size it was first given
+const wordsMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, fog: false, toneMapped: false, opacity: 0 });
+const wordsPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), wordsMat);
+wordsPlane.position.set(0, 0, -WORDS_D);
+wordsPlane.frustumCulled = false;
+camera.add(wordsPlane);
+const wordsCss = { w: 1, h: 1 };
+
+function paintWords() {
+  const lines = words.html.replace(/<span class="sub">/g, '\n').replace(/<\/span>|<br>/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean);
+  const maxW = Math.min(Math.max(1, innerWidth) - 48, 660), font = "400 16px 'Inter', system-ui, -apple-system, sans-serif", lh = 16 * 1.55;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const c = wordsCanvas.getContext('2d');
+  c.font = font;
+  // wrap each line to the measure, as the page would
+  const rows = [];
+  for (const line of lines) {
+    let row = '';
+    for (const word of line.split(' ')) {
+      const trial = row ? `${row} ${word}` : word;
+      if (c.measureText(trial).width > maxW && row) { rows.push(row); row = word; } else row = trial;
+    }
+    if (row) rows.push(row);
+  }
+  wordsCss.w = Math.ceil(Math.max(1, ...rows.map((r) => c.measureText(r).width)) + 8);
+  wordsCss.h = Math.ceil(rows.length * lh + 8);
+  const pw = Math.ceil(wordsCss.w * dpr), ph = Math.ceil(wordsCss.h * dpr);
+  if (!wordsTex || wordsCanvas.width !== pw || wordsCanvas.height !== ph) {
+    wordsCanvas.width = pw; wordsCanvas.height = ph;
+    if (wordsTex) wordsTex.dispose();
+    wordsTex = new THREE.CanvasTexture(wordsCanvas);
+    wordsTex.colorSpace = THREE.SRGBColorSpace;
+    wordsMat.map = wordsTex; wordsMat.needsUpdate = true;
+  }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, wordsCss.w, wordsCss.h);
+  c.font = font; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = 'rgba(255, 255, 255, 0.82)';
+  rows.forEach((r, i) => c.fillText(r, wordsCss.w / 2, 4 + lh * (i + 0.5)));
+  wordsTex.needsUpdate = true;
+}
+if (document.fonts && document.fonts.load) document.fonts.load("400 16px 'Inter'").then(() => { if (words.html) paintWords(); });
+// how many world units one screen pixel covers at a given distance ahead of the lens
+const unitsPerPx = (d) => (2 * d * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, innerHeight);
+// a screen position, as a point in front of the camera at distance d
+function placeAhead(obj, x, y, d) {
+  const u = unitsPerPx(d);
+  obj.position.set((x - innerWidth / 2) * u, (innerHeight / 2 - y) * u, -d);
+}
+function placeWords(t) {
+  if (!words.html) return;
+  let a = 0, sc = 1;
+  if (words.shownAt !== null) {
+    const k = Math.min(1, (t - words.shownAt) / 1.1), ks = Math.min(1, (t - words.shownAt) / 1.6);
+    a = k; sc = reduceMotion ? 1 : 0.75 + 0.25 * (1 - Math.pow(1 - ks, 3));   // eases up to full size as it fades in
+  } else if (words.hiddenAt !== null) a = Math.max(0, 1 - (t - words.hiddenAt) / 1.1);
+  wordsMat.opacity = a * (1 - (words.gone || 0));
+  const u = unitsPerPx(WORDS_D);
+  wordsPlane.scale.set(wordsCss.w * u * sc, wordsCss.h * u * sc, 1);
+}
+// each loose leaf is painted into its own small canvas every frame (the same
+// strokes as before), shown on a sprite that sits nearer or farther than the words
+const LEAF_PX = 256, LEAF_DRAW = 200;
+function leafSprite3d(L) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = LEAF_PX;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false, toneMapped: false }));
+  sp.frustumCulled = false;
+  camera.add(sp);
+  return { cv, ctx: cv.getContext('2d'), tex, sp, d: Math.random() < 0.5 ? LEAF_NEAR_D : LEAF_FAR_D };
+}
+function dropLeafSprite(L) {
+  if (!L.s3) return;
+  camera.remove(L.s3.sp); L.s3.tex.dispose(); L.s3.sp.material.dispose(); L.s3 = null;
+}
 let framesDrawn = 0;
 const clock = new THREE.Clock();
 // for checking from the console: __stage() reports where the camera is and what is being drawn
-window.__stage = () => ({ camera: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, framesDrawn, flying: !!flight, scrollY, scale: +sceneScaleFor(canvas.width, canvas.height).toFixed(3), canvas: [canvas.width, canvas.height], leafTop: +LEAF_TOP.toFixed(2) });
+window.__stage = () => ({ camera: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, framesDrawn, flying: !!flight, scrollY, scale: +sceneScaleFor(canvas.width, canvas.height).toFixed(3), canvas: [canvas.width, canvas.height], leafTop: +LEAF_TOP.toFixed(2), words: { shownAt: words.shownAt, hiddenAt: words.hiddenAt, gone: words.gone, opacity: wordsMat.opacity, scale: wordsPlane.scale.x, css: wordsCss, canvas: [wordsCanvas.width, wordsCanvas.height], msg: msg.className } });
 const dirV = new THREE.Vector3(), target = new THREE.Vector3();
 let windClock = 0;
 function frame() {
@@ -2321,8 +2423,7 @@ function frame() {
     scrollcue.classList.toggle('show', scrollY < 24 && framesDrawn >= 2);   // an invitation, until the first scroll
     // the words in the sky fade out as the work scrolls up toward them
     const gone = Math.min(1, Math.max(0, (scrollY - (innerHeight * (FLIGHT_VH() + REST_VH() * 0.35)) / 100) / Math.max(1, (innerHeight * REST_VH() * 0.65) / 100)));
-    if (gone > 0) { msg.style.transition = 'none'; msg.style.opacity = (1 - gone).toFixed(3); }
-    else if (msg.style.transition) { msg.style.transition = ''; msg.style.opacity = ''; }
+    words.gone = gone;
     if (u > 0.5) vignette.classList.add('lift'); else vignette.classList.remove('lift');
     if (camera.position.y < SKY_AT && skyStart !== null) { skyStart = null; say(null); }   // scrolled back down under the trees
     if (camera.position.y >= SKY_AT && skyStart === null) {
@@ -2356,6 +2457,7 @@ function frame() {
   target.copy(camera.position).add(dirV);
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
+  placeWords(t);
   // entering 100%: the camera has just risen through the treetops
   const topY = heightFor(1) - 0.5; // a touch early, since the slider eases in and never quite lands
   if (yBefore < topY && camera.position.y >= topY) heroDue = true;
