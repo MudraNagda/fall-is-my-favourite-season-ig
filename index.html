@@ -349,10 +349,10 @@ const DEFAULTS = {
   // faded print
   saturate: 1.02, contrast: 0.98, sepia: 0.06, brightness: 0.98, wash: 0.3, leak: 0.4, vignette: 0,
   // movement
-  wind: 1, windSpeed: 1, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.5, tighten: 22, drift: 1, clouds: 2,
-  fov: 96, fovPortrait: 108, startPct: 50, rise: 150, camX: 0, camZ: 0, flightVh: 220, restVh: 60, easePow: 2.4,
-  dabScale: 1, dabStretch: 1, twigDark: 1,
-  gather: 0, gatherFrom: 23, gatherTo: 30, nudgeTree: 0, nudgeOut: 0, nudgeSpread: 1, nudgeShow: 0,
+  wind: 2, windSpeed: 1.4, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.97, tighten: 22, drift: 0, clouds: 1.5,
+  fov: 96, fovPortrait: 108, startPct: 10, rise: 140, camX: 0, camZ: 0, flightVh: 220, restVh: 60, easePow: 2.4,
+  dabScale: 2, dabStretch: 1.25, twigDark: 0,
+  gather: 0.09, gatherFrom: 0, gatherTo: 5, nudgeTree: 0, nudgeOut: 0, nudgeSpread: 1, nudgeShow: 0,
   // loose leaves
   leafCount: 5, leafFall: 1, leafSway: 1.7, leafSize: 1,
   // scroll
@@ -951,6 +951,7 @@ const leafMat = new THREE.ShaderMaterial({
 const TREE_TWEAKS = {
   1: { out: 3.8, spread: 0.8 },   // its branches crossed the sky window
   4: { out: 2.8 },
+  5: { spread: 0.65 },
 };
 const treeShift = new THREE.Vector3();
 function shiftFor(t, ti, x, y, z, out) {
@@ -1428,7 +1429,7 @@ function leafSprite(stops) {
 // Every leaf is painted for itself: two or three stops picked from anywhere
 // between the four swatches (a touch muted to sit with the faded print), each
 // nudged lighter or darker, so no two leaves share a colour.
-const SWATCHES = [[233, 148, 169], [200, 221, 60], [104, 172, 58], [242, 185, 41], [233, 87, 28], [213, 51, 26]]; // blossom pink, lime, green, gold, maple orange, red: what falls from these trees
+const SWATCHES = [[233, 148, 169], [236, 229, 212], [200, 221, 60], [104, 172, 58], [242, 185, 41], [233, 87, 28], [213, 51, 26]]; // blossom pink, white, lime, green, gold, maple orange, red: what falls from these trees
 function randomLeafColour() {
   const at = Math.random() * (SWATCHES.length - 1);
   const i = Math.floor(at), k = at - i;
