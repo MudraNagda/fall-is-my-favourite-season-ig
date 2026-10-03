@@ -10,6 +10,8 @@
 <meta property="og:description" content="Mudra is a product designer who pays attention to ordinary things. Designing and shipping deterministic AI at Kognitos. Currently enjoying the beginning of fall.">
 <meta property="og:url" content="https://mudranagda.com/">
 <meta property="og:type" content="website">
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="modulepreload" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.170.0/three.module.min.js">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
 <style>
@@ -24,7 +26,8 @@
   /* The hero layers are all fixed to the viewport. The page scrolls over a tall
      track: that scroll distance is what turns the sky from blue to white. The
      rest of the site goes in <main class="site">, which slides up over the hero. */
-  html.locked, html.locked body { overflow: hidden; } /* no scrolling until the flight has landed */
+  html.locked, html.locked body { overflow: hidden; } /* no scrolling until the scene is here */
+  html.arriving #stage { opacity: 0; }                 /* nothing until the scene starts to come in */
   body {
     margin: 0;
     background: var(--sky);
@@ -57,7 +60,7 @@
   }
   /* painterly finish: paper grain + a warm vignette pulling the corners in,
      the way the photo's edges fall into shadowed foliage */
-  .grain, .wash, .leak, .vignette, .flash {
+  .grain, .wash, .leak, .flash {
     position: fixed;
     inset: 0;
     pointer-events: none;
@@ -91,12 +94,6 @@
   @media (prefers-reduced-motion: reduce) {
     .leak { animation: none; }
   }
-  .vignette {
-    background: radial-gradient(ellipse 78% 72% at 50% 50%, rgba(60, 30, 10, 0) 55%, rgba(60, 30, 10, 0.42) 100%);
-    transition: opacity 1.4s ease;
-  }
-  .vignette { opacity: var(--vig, 1); }
-  .vignette.lift { opacity: 0; }
   /* the white-out at the top of the flight, then the return to the ground */
   .flash {
     background: #fbfaf4;
@@ -132,7 +129,7 @@
   @media (prefers-reduced-motion: reduce) {
     .msg { transform: none; transition: opacity 0.5s ease; }
   }
-  .track { height: 380vh; }  /* the hero's screen, then 220vh of scrolling that climbs the trees, then 60vh of sky to read in */
+  .track { height: 334vh; }  /* the hero's screen, then 220vh of scrolling that climbs the trees, then a breath of sky */
   .site {
     position: relative;
     z-index: 5;               /* above every fixed hero layer */
@@ -143,7 +140,7 @@
   }
   #grainWhite { z-index: 7; }  /* the same grain carries on over the site and the leaves */
   /* work: a short, plain list on the sky; the leaves keep falling over it */
-  .work { box-sizing: border-box; max-width: 720px; margin: 0 auto; padding: 18vh max(24px, 6vw) 22vh; }
+  .work { box-sizing: border-box; max-width: 720px; margin: 0 auto; padding: 2vh max(24px, 6vw) 22vh; }
   .work h2, .work h3 { margin: 0; font: 500 11px/1.4 'Inter', system-ui, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.7; }
   .work ol { list-style: none; margin: 0; padding: 0; }
   .work li { display: grid; grid-template-columns: 9.5em 1fr; gap: 6px 32px; padding: 26px 0; border-top: 0.5px solid rgba(255, 255, 255, 0.16); }
@@ -171,6 +168,9 @@
   .menu a:hover, .menu a:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
   .menu.show { opacity: 1; pointer-events: auto; }
   @media (max-width: 560px) { .work li { grid-template-columns: 1fr; gap: 2px; } }
+  /* the painter's wall: the canvas is clear where the sky still shows, plaster below the painted edge */
+  .paint { position: relative; height: 100vh; min-height: 520px; }
+  .paint canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   /* footer: a raked-up pile of leaves on the ground, and whatever falls onto it */
   .foot { position: relative; min-height: max(78vh, 460px); overflow: hidden; }
   .foot canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -298,7 +298,6 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
-<div class="vignette"></div>
 <div class="flash" id="flash"></div>
 <p class="msg" id="msg"></p>
 <canvas class="leaf" id="leaf"></canvas>
@@ -327,6 +326,8 @@
       <li><a href="https://www.medtronic.com" target="_blank" rel="noopener">Medtronic</a><p>Design for medical devices.</p></li>
     </ol>
   </section>
+  <!-- the end of the page: the sky turns out to be a wall, still being painted -->
+  <footer class="paint" id="paint"><canvas id="wall" aria-hidden="true"></canvas></footer>
 </main>
 
 <script type="module">
@@ -348,13 +349,15 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 // sliders over these; nothing here changes unless that panel is open.
 const DEFAULTS = {
   // grain
-  grainOpacity: 0.3, grainFlicker: 0, grainSize: 1.5, grainContrast: 135, grainFps: 29, grainBlend: 'soft-light',
+  grainOpacity: 0, grainFlicker: 0, grainSize: 1.5, grainContrast: 135, grainFps: 29, grainBlend: 'soft-light',
   // faded print
   saturate: 1.02, contrast: 0.98, sepia: 0.06, brightness: 0.98, wash: 0.3, leak: 0.4, vignette: 0,
   // movement
-  wind: 2, windSpeed: 1.4, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.97, tighten: 22, drift: 0, clouds: 1.5,
-  fov: 96, fovPortrait: 108, startPct: 10, rise: 140, camX: 0, camZ: 0, flightVh: 220, restVh: 60, easePow: 2.4,
-  dabScale: 2, dabStretch: 1.25, twigDark: 0,
+  wind: 1.3, windSpeed: 1.1, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.97, tighten: 22, drift: 0, clouds: 1.5,
+  fov: 96, fovPortrait: 108, startPct: 26, rise: 140, camX: 0, camZ: 0, flightVh: 220, restVh: 14, easePow: 2.4,
+  dabScale: 1, dabStretch: 1.25, twigDark: 0, thinBranch: 0.085,
+  poemPct: 46, poemSize: 16,
+  depthFrom: 10, depthTo: 30, depthFade: 0.9, lightWarmth: 0.3, lightBright: 0.35, lightTint: 0.15,
   gather: 0.09, gatherFrom: 0, gatherTo: 5, nudgeTree: 0, nudgeOut: 0, nudgeSpread: 1, nudgeShow: 0,
   // loose leaves
   leafCount: 5, leafFall: 1, leafSway: 1.7, leafSize: 1,
@@ -388,7 +391,7 @@ const SKY_PALE = new THREE.Color('#8fbdeb').convertLinearToSRGB();  // the blue 
 const SUN_GLOW = new THREE.Color('#f6eed8').convertLinearToSRGB();  // then the faintest warmth
 const SKY_WHITE = new THREE.Color('#fdfcf7').convertLinearToSRGB(); // and white
 const FOG = new THREE.Color('#3f8ce6');
-const SUN_DIR = new THREE.Vector3(-0.62, 0.66, -0.42).normalize();
+const SUN_DIR = new THREE.Vector3(-0.34, 0.6, -0.72).normalize();   // up the frame and to the right, behind the window
 
 // leaf families: A and B are the two hues each dab blends between
 const FAMILIES = {
@@ -475,7 +478,7 @@ const sky = new THREE.Mesh(
       }`,
   }),
 );
-sky.renderOrder = 1;
+sky.renderOrder = -1;   // drawn first: the see-through leaves blend over it
 scene.add(sky);
 
 // ---- bark texture: dark brown, mottled, a little lichen ---------------------
@@ -585,10 +588,11 @@ function dabAtlas() {
 // One merged buffer per tree for branches; one global buffer for twig lines;
 // one global instanced buffer for every leaf dab in the wood.
 class TubeBuilder {
-  constructor() { this.pos = []; this.nor = []; this.uv = []; this.idx = []; this.count = 0; }
+  constructor() { this.pos = []; this.nor = []; this.uv = []; this.rad = []; this.thick = []; this.idx = []; this.count = 0; }
   // path: [{p: Vector3, r: number}], sides: ring resolution
   addPath(path, sides) {
     const base = this.count;
+    const thickest = Math.max(...path.map((q) => q.r));   // a branch is shown or hidden whole, by its thickest point
     let N = new THREE.Vector3();
     let arc = 0;
     const T = new THREE.Vector3(), B = new THREE.Vector3(), tmp = new THREE.Vector3();
@@ -616,6 +620,7 @@ class TubeBuilder {
         this.pos.push(p.x + nx * rad, p.y + ny * rad, p.z + nz * rad);
         this.nor.push(nx, ny, nz);
         this.uv.push(j / sides, arc / 2.4);
+        this.rad.push(rad); this.thick.push(thickest);
       }
     }
     const ring = sides + 1;
@@ -632,6 +637,8 @@ class TubeBuilder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    g.setAttribute('aRadius', new THREE.Float32BufferAttribute(this.rad, 1));
+    g.setAttribute('aThick', new THREE.Float32BufferAttribute(this.thick, 1));
     g.setIndex(this.idx);
     return g;
   }
@@ -654,13 +661,19 @@ function addDab(p, family, scale) {
     // the original window. Its early return and its one random draw are kept
     // exactly as they were, so the seeded wood grows identically.
     if (p.y < 18) return;
-    if (p.y < 22 || rnd() < 0.75) flightOnly = 1;
+    if (p.y >= 22) rnd();   // the original draw, kept exactly, so the wood grows the same; every dab in the cone now waits for the climb
+    flightOnly = 1;
   } else {
     // around that cone, a wider window in the rough shape of a heart (point toward
     // the bottom of the screen, lobes toward the top): these dabs also wait for
     // the flight. No random draw here, so nothing downstream shifts.
-    const u = -p.x / (p.y * 0.24), v = -p.z / (p.y * 0.24), q = u * u + v * v - 1;
-    if (q * q * q - u * u * v * v * v < 0) flightOnly = 1;
+    // the window sits a little above the middle of the frame, so it reads as somewhere to go
+    const u = -p.x / (p.y * 0.3), v = (-p.z - p.y * 0.14) / (p.y * 0.3), q = u * u + v * v - 1;
+    const f = q * q * q - u * u * v * v * v;   // below zero inside the heart, growing outward
+    // the edge is ragged, not cut: outside the heart, dabs thin out over a band, each
+    // decided by a fixed hash of its own position (no random draw, so the wood is unchanged)
+    const hash = ((Math.sin(p.x * 12.9898 + p.z * 78.233 + p.y * 37.719) * 43758.5453) % 1 + 1) % 1;
+    if (f < 0 || hash > f / 0.9) flightOnly = 1;
   }
   // face mostly downward/upward (seen from below), random tilt and spin
   const tilt = rnd() < 0.65 ? rr(0, 0.7) : rr(0.7, 1.5);
@@ -810,7 +823,28 @@ const LOD = {
   mid:  { maxDepth: 3, leafDepth: 2, leafStep: 0.5, dabsPerCluster: 4, spread: 0.7, dabScale: 1.4, branches: 10 },
   far:  { maxDepth: 3, leafDepth: 1, leafStep: 0.8, dabsPerCluster: 3, spread: 0.9, dabScale: 2.2, branches: 8 },
 };
-const barkMat = new THREE.MeshLambertMaterial({ map: barkTexture(), color: new THREE.Color('#fbeadb') });
+const barkMat = new THREE.MeshLambertMaterial({ map: barkTexture(), color: new THREE.Color('#fbeadb'), transparent: true });
+// The thinnest branches read as bare twigs, which look like winter. A branch that
+// never gets thicker than a chosen size is not drawn at all, and a kept branch is
+// drawn to within a little of its tip; the leaves they carried stay where they are.
+const barkThin = { uThin: { value: 0.08 }, uTintB: { value: 0.15 }, uDepthB: { value: new THREE.Vector3(10, 30, 0.9) }, uSkyB: { value: new THREE.Color('#bcd4f0') } };
+function thinBranchShader(shader) {
+  Object.assign(shader.uniforms, barkThin);
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aRadius, aThick; varying float vRad, vThick; varying vec3 vWorldB;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRad = aRadius; vThick = aThick; vWorldB = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uThin, uTintB; uniform vec3 uDepthB, uSkyB; varying float vRad, vThick; varying vec3 vWorldB;')
+    // a branch is hidden whole if it never gets thick enough; a kept branch loses only its needle-fine tip
+    .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+      if (vThick < uThin || vRad < uThin * 0.45) discard;
+      // the same depth fade as the leaves around it: far branches thin out and pale, band by band
+      float dB = max(0.0, vWorldB.y - cameraPosition.y);
+      float bathedB = uDepthB.z * (0.5 * smoothstep(uDepthB.x, uDepthB.y, dB) + 0.3 * smoothstep(uDepthB.x * 1.6, uDepthB.y * 1.4, dB) + 0.2 * smoothstep(uDepthB.y, uDepthB.y * 2.2, dB));
+      `)
+    .replace('#include <opaque_fragment>', '#include <opaque_fragment>\ngl_FragColor.rgb = mix(gl_FragColor.rgb, uSkyB, bathedB * uTintB); gl_FragColor.a = 1.0 - bathedB;');
+}
+barkMat.onBeforeCompile = thinBranchShader;
 const trees = [];
 function ring(count, r0, r1, lod, families, hMin, hMax) {
   for (let i = 0; i < count; i++) {
@@ -887,11 +921,15 @@ console.info('beech ascent: leaf dabs', leaves.scale.length, 'twig segments', tw
 
 const leafMat = new THREE.ShaderMaterial({
   side: THREE.DoubleSide,
+  transparent: true,   // far leaves are see-through (their depth is still written, so near leaves hide them)
   uniforms: {
     uMap: { value: dabAtlas() },
     uTime: { value: 0 },
     uWind: { value: reduceMotion ? 0 : 1 },
-    uDab: { value: new THREE.Vector2(1, 1) },   // overall leaf size, and how long each leaf is drawn against its width
+    uDab: { value: new THREE.Vector2(1, 1) },
+    uDepth: { value: new THREE.Vector3(10, 30, 0.9) },   // depth fade: begins, deepest, strength
+    uLight: { value: new THREE.Color('#bcd4f0') },         // the light the far leaves bathe in (set from the warmth dial)
+    uTint: { value: 0.15 },
     uFogColor: { value: FOG },
     uFogRange: { value: new THREE.Vector2(34, 150) },
     uSun: { value: SUN_DIR },
@@ -900,15 +938,17 @@ const leafMat = new THREE.ShaderMaterial({
     attribute vec3 iPos; attribute vec4 iQuat; attribute float iScale;
     attribute vec3 iColA; attribute vec3 iColB; attribute vec4 iMisc;
     uniform float uTime, uWind; uniform vec2 uFogRange, uDab; uniform vec3 uSun;
-    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
+    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade, vShow, vDist;
     vec3 qrot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
     void main() {
       float phase = iMisc.x;
       vUv = (uv + vec2(mod(iMisc.y, 2.0), floor(iMisc.y / 2.0))) * 0.5;
       // flutter: each dab rocks on its stem
       float f = (sin(uTime * 0.9 + phase) * 0.22 + sin(uTime * 0.33 + phase * 1.7) * 0.14) * uWind;
-      float show = iMisc.z > 0.5 ? smoothstep(26.0, 34.0, cameraPosition.y) : 1.0;
-      vec3 p = position * vec3(1.0, uDab.y, 1.0) * iScale * show * uDab.x;
+      // the window's leaves are never shrunk away: they stay at full size and are
+      // faded toward the sky instead, which reads as distance, and come forward as the camera climbs
+      vShow = iMisc.z > 0.5 ? smoothstep(26.0, 34.0, cameraPosition.y) : 1.0;
+      vec3 p = position * vec3(1.0, uDab.y, 1.0) * iScale * uDab.x;
       float c = cos(f), s = sin(f);
       p = vec3(p.x, p.y * c - p.z * s, p.y * s + p.z * c);
       vec3 world = iPos + qrot(iQuat, p);
@@ -918,25 +958,39 @@ const leafMat = new THREE.ShaderMaterial({
       world.xz += vec2(sin(uTime * 0.45 + phase), cos(uTime * 0.34 + phase * 0.7)) * sway * gust * uWind;
       float dist = length(world - cameraPosition);
       vFog = smoothstep(uFogRange.x, uFogRange.y, dist);
+      vDist = max(0.0, world.y - cameraPosition.y);   // height above the lens: the light comes from above, so the corners of the frame are as near as the middle
       vNear = smoothstep(0.12, 0.8, dist);
       // backlight: thin leaves against the sun glow, brighter toward the top
       vec3 n = normalize(qrot(iQuat, vec3(0.0, 0.0, 1.0)));
       float back = abs(dot(n, uSun));
       float toSun = 0.5 + 0.5 * dot(normalize(world - cameraPosition), uSun);   // the side of the sky the sun is on
-      vShade = (0.42 + 0.4 * clamp(world.y / 34.0, 0.0, 1.0) + 0.25 * back + 0.15 * toSun) * iMisc.w;
+      vShade = (0.36 + 0.4 * clamp(world.y / 34.0, 0.0, 1.0) + 0.28 * back + 0.34 * toSun * toSun) * iMisc.w;   // lit through, strongest toward the sun
       vColA = iColA; vColB = iColB;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
     }`,
   fragmentShader: `
-    uniform sampler2D uMap; uniform vec3 uFogColor;
-    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade;
+    uniform sampler2D uMap; uniform vec3 uFogColor, uDepth, uLight; uniform float uTint;
+    varying vec2 vUv; varying vec3 vColA, vColB; varying float vFog, vNear, vShade, vShow, vDist;
     void main() {
       vec4 t = texture2D(uMap, vUv);
       float a = t.a * vNear;
       if (a < mix(0.42, 0.18, vFog)) discard;
       vec3 col = mix(vColA, vColB, t.r) * (0.2 + 1.0 * t.g) * vShade;
       col = mix(col, uFogColor, vFog * 0.85);
-      gl_FragColor = vec4(col, 1.0);
+      // Depth, step by step: the farther a leaf is from the lens, the more see-through
+      // and the paler it is, through several bands of distance (uDepth: where the
+      // fading begins, where it is deepest, and how far it goes). Only a share of a
+      // far leaf's pixels are drawn, the grain hides the weave, and the sky and clouds
+      // show through. As the camera climbs, each leaf comes forward band by band.
+      // As in a painting: under the canopy we are in shade and see the near leaves
+      // clearly, in full colour; the farther leaves are bathing in light, and dissolve
+      // toward it band by band. Nothing shrinks or stipples; only the light changes.
+      float bathed = uDepth.z * (0.5 * smoothstep(uDepth.x, uDepth.y, vDist) + 0.3 * smoothstep(uDepth.x * 1.6, uDepth.y * 1.4, vDist) + 0.2 * smoothstep(uDepth.y, uDepth.y * 2.2, vDist));
+      // the fade is the leaf's own opacity: far leaves go see-through and the sky shows
+      // behind them, with only a touch of the light's colour laid on
+      col = mix(col, uLight, bathed * uTint);
+      col *= 1.0 - 0.14 * (1.0 - smoothstep(4.0, 16.0, vDist));   // the nearest, in the shade
+      gl_FragColor = vec4(col, 1.0 - bathed);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`,
@@ -967,7 +1021,7 @@ function shiftFor(t, ti, x, y, z, out) {
   const ax = t.x + (t.lean ? t.lean.x : 0) * y, az = t.z + (t.lean ? t.lean.z : 0) * y;
   return out.set(t.x * gather + ux * nudge + (x - ax) * (spread - 1), 0, t.z * gather + uz * nudge + (z - az) * (spread - 1));
 }
-const barkPick = barkMat.clone(); barkPick.color = new THREE.Color('#ff5a3c');   // the chosen tree, while choosing
+const barkPick = barkMat.clone(); barkPick.color = new THREE.Color('#ff5a3c'); barkPick.onBeforeCompile = thinBranchShader;   // the chosen tree, while choosing
 function placeTrees() {
   trees.forEach((t, ti) => {
     const pos = t.mesh.geometry.attributes.position, a = pos.array, o = t.barkOrig;
@@ -1035,11 +1089,79 @@ const puffs = [];
   }
 });
 
+// ---- birds and butterflies ----------------------------------------------------
+// Small creatures living among the trees, in the wood's own space, so they rise
+// past the lens with the canopy as the visitor climbs. Birds flit from perch to
+// perch in the mid canopy with quick wingbeats; butterflies wander lower, slowly,
+// on soft fluttering wings. Each is a little sprite painted once.
+const cr = mulberry(4242);   // their own numbers: the wood is untouched
+function creatureSprite(kind, tint) {
+  const S = 64, c = document.createElement('canvas'); c.width = S * 2; c.height = S;   // two frames: wings up, wings down
+  const x = c.getContext('2d');
+  for (let f = 0; f < 2; f++) {
+    x.save(); x.translate(S * f + S / 2, S / 2);
+    if (kind === 'bird') {
+      // seen from below: a small dark body, two wings swept back, a fanned tail
+      x.fillStyle = '#2a2320';
+      x.beginPath(); x.ellipse(0, 0, 5, 11, 0, 0, Math.PI * 2); x.fill();
+      x.beginPath(); x.moveTo(0, 12); x.lineTo(-5, 20); x.lineTo(5, 20); x.closePath(); x.fill();
+      const lift = f ? 6 : -4;
+      for (const sx of [-1, 1]) { x.beginPath(); x.moveTo(sx * 2, -3); x.quadraticCurveTo(sx * 18, -10 + lift, sx * 26, 2 + lift); x.quadraticCurveTo(sx * 14, 4 + lift * 0.4, sx * 2, 6); x.closePath(); x.fill(); }
+    } else {
+      // a butterfly: four rounded wings in its colour, a thin body
+      const open = f ? 1 : 0.35;
+      x.fillStyle = tint;
+      for (const sx of [-1, 1]) {
+        x.beginPath(); x.ellipse(sx * 12 * open, -5, 11 * open, 9, sx * 0.3, 0, Math.PI * 2); x.fill();
+        x.beginPath(); x.ellipse(sx * 9 * open, 7, 8 * open, 7, -sx * 0.2, 0, Math.PI * 2); x.fill();
+      }
+      x.fillStyle = 'rgba(40, 25, 15, 0.9)';
+      x.beginPath(); x.ellipse(0, 1, 1.6, 12, 0, 0, Math.PI * 2); x.fill();
+    }
+    x.restore();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.repeat.set(0.5, 1);
+  return tex;
+}
+const creatures = [];
+const BUTTERFLY_TINTS = ['#f4b929', '#f3a6bb', '#f5f0e4', '#e9571c', '#c8dd3c'];
+function addCreature(kind) {
+  const tex = creatureSprite(kind, BUTTERFLY_TINTS[Math.floor(cr() * BUTTERFLY_TINTS.length)]);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
+  const size = kind === 'bird' ? 1.6 : 0.32;
+  sp.scale.set(size, size, 1);
+  scene.add(sp);
+  // a spot among the leaves, well out from the middle, so they never cross the window of sky overhead
+  const home = () => { const a = cr() * Math.PI * 2, r = 7 + cr() * 9; return new THREE.Vector3(Math.cos(a) * r, kind === 'bird' ? 24 + cr() * 14 : 16 + cr() * 10, Math.sin(a) * r); };
+  creatures.push({ kind, sp, tex, from: home(), to: home(), t: cr(), speed: kind === 'bird' ? 0.22 + cr() * 0.18 : 0.06 + cr() * 0.05, wing: cr() * 6.3, wingHz: kind === 'bird' ? 9 : 4.5, rest: 0, ph: cr() * 6.3 });
+}
+for (let i = 0; i < 7; i++) addCreature('butterfly');   // (birds are drawn too, but none are let out)
+const cv = new THREE.Vector3();
+function flyCreatures(t, dt) {
+  for (const c of creatures) {
+    if (c.rest > 0) { c.rest -= dt; } else {
+      c.t += dt * c.speed * (reduceMotion ? 0 : 1);
+      if (c.t >= 1) { const a = cr() * Math.PI * 2, r = 7 + cr() * 9; c.from.copy(c.to); c.to.set(Math.cos(a) * r, c.kind === 'bird' ? 24 + cr() * 14 : 16 + cr() * 10, Math.sin(a) * r); c.t = 0; c.rest = c.kind === 'bird' ? 1 + cr() * 4 : 0; }
+    }
+    const k = c.kind === 'bird' ? c.t * c.t * (3 - 2 * c.t) : c.t;
+    cv.lerpVectors(c.from, c.to, k);
+    // birds arc up between perches; butterflies wander in a loose spiral
+    if (c.kind === 'bird') cv.y += Math.sin(k * Math.PI) * 3;
+    else { cv.x += Math.sin(t * 1.1 + c.ph) * 0.6; cv.y += Math.sin(t * 1.7 + c.ph) * 0.4; cv.z += Math.cos(t * 0.9 + c.ph) * 0.6; }
+    c.sp.position.copy(cv);
+    const beating = c.rest <= 0 || c.kind === 'butterfly';
+    c.tex.offset.x = beating && Math.sin(t * c.wingHz * 2 * Math.PI + c.wing) > 0 ? 0.5 : 0;
+    c.sp.material.rotation = c.kind === 'bird' ? Math.atan2(c.to.x - c.from.x, c.to.z - c.from.z) : Math.sin(t * 0.8 + c.ph) * 0.4;
+    // fade out when very close to the lens, so nothing smacks into the eye
+    c.sp.material.opacity = sstep(1.5, 4, c.sp.position.distanceTo(camera.position));
+  }
+}
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // ---- camera + flight -------------------------------------------------------
 const flash = document.getElementById('flash');
-const vignette = document.querySelector('.vignette');
 const msg = document.getElementById('msg');
 let skyStart = null; // moment the camera clears the treetops
 // the highest leaf in the wood: once the upward-looking camera is above it, no leaf is in view
@@ -1147,7 +1269,6 @@ function land() {
   requestAnimationFrame(() => {
     flash.classList.remove('on');
     flash.style.opacity = '';
-    vignette.classList.remove('lift');
   });
 }
 
@@ -1203,13 +1324,19 @@ function showSound() {
       },
     });
   };
+})();
+// the player is only fetched once the scene is on screen, so it never competes with the wood for the first second
+let ytAsked = false;
+function loadYouTube() {
+  if (ytAsked) return;
+  ytAsked = true;
   const tag = document.createElement('script');
   tag.src = 'https://www.youtube.com/iframe_api';
   tag.onerror = () => { ytFailed = true; fallBack(); };
   document.head.appendChild(tag);
   // if nothing answers in a few seconds, stop waiting and use the generated piece
   setTimeout(() => { if (!ytReady && !ytFailed) { ytFailed = true; fallBack(); } }, 6000);
-})();
+}
 
 // for checking from the console: __music() reports what the soundtrack is doing
 window.__music = () => ({ ytReady, ytFailed, wantSound, audible: music.audible, usingGenerated: music.useGenerated,
@@ -1356,9 +1483,11 @@ function generated(ctx) {
   }, 500);
 }
 
+let poemReady = false;
 function resize() {
   const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
   if (words.html) paintWords();   // the measure of the words follows the window
+  if (poemReady) paintPoem();   // (not yet made on the very first call)
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   // keep the wide-lens feel on portrait screens
@@ -1587,6 +1716,106 @@ const KID_DEFAULTS = {
   skin: '#eebb93', hair: '#5b3519', specs: '#2f5d3e', blush: '#f0788c', ink: '#2a1d14',
 };
 const K = { ...KID_DEFAULTS };
+// ---- the painter --------------------------------------------------------------------
+// At the foot of the page the sky turns out to be a wall, and someone is still
+// painting it: a figure seen from behind in a white sun hat, red top and denim
+// shorts, with a roller on a long pole. The painted part is a patchwork of broad,
+// overlapping strokes in the wood's own colours, soft-edged like paint; below it
+// the wall is still bare. She keeps working: every few seconds the roller lays
+// down another stroke, wet and dark at first, drying into the patchwork.
+const wallEl = document.getElementById('paint'), wallC = document.getElementById('wall');
+const wctx = wallC.getContext('2d');
+const WALL = '#c6d2dc', WET = '#2f6ea6';
+const STROKE_TINTS = ['#5aa88a', '#5aa88a', '#7fbf9b', '#4f9fa6', '#6fa7d8', '#a9c7e6', '#c9d94a', '#e3e04a', '#8fc0e0', '#dfe8ee', '#f0b8c6', '#6a9ed2', '#9ccfb4'];
+const wr = mulberry(1212);
+const newStroke = (y0, y1, born) => ({ x: wr() * 1.04 - 0.02, y: y0 + wr() * (y1 - y0), w: 0.08 + wr() * 0.14, h: 0.07 + wr() * 0.12, rot: (wr() - 0.5) * 0.16, tint: STROKE_TINTS[Math.floor(wr() * STROKE_TINTS.length)], seed: wr() * 1000, born });
+const strokes = [];
+for (let i = 0; i < 150; i++) strokes.push(newStroke(-0.06, 0.52, -100));   // the part already painted, long dry
+const roller = { x: 0.5, y: 0.45, tx: 0.5, ty: 0.45, next: 0 };
+// the dry patchwork is painted once into its own canvas and only repainted when a stroke dries
+const dryC = document.createElement('canvas'); const dctx2 = dryC.getContext('2d');
+let dryStamp = -1, dryCount = 0;
+function brush(c, st, W, H, k, tint, alpha) {
+  // one stroke: a few overlapping soft-cornered blocks, so the edge is broken like a loaded roller's
+  const sx = st.x * W, sy = st.y * H, sw = st.w * W, sh = st.h * H * k;
+  c.save(); c.translate(sx, sy); c.rotate(st.rot);
+  c.fillStyle = tint; c.globalAlpha = alpha;
+  let r = st.seed;
+  const n = () => { r = (r * 9301 + 49297) % 233280; return r / 233280; };
+  for (let j = 0; j < 4; j++) { const ox = (n() - 0.5) * sw * 0.35, oy = (n() - 0.5) * sh * 0.3; c.beginPath(); c.roundRect(-sw / 2 + ox, -sh / 2 + oy, sw * (0.7 + n() * 0.35), sh * (0.7 + n() * 0.35), 5); c.fill(); }
+  // the drag of the roller through it: faint lighter and darker bands
+  c.globalAlpha = alpha * 0.14;
+  for (let j = 0; j < 5; j++) { c.fillStyle = j % 2 ? '#ffffff' : '#000000'; c.fillRect(-sw / 2 + 4, -sh / 2 + (j + 0.5) * (sh / 5), sw - 8, 3); }
+  c.restore();
+}
+function paintWall(t) {
+  const r = wallEl.getBoundingClientRect();
+  if (r.top > innerHeight + 40 || r.bottom < -40) return;   // off screen: nothing to do
+  const dpr = Math.min(devicePixelRatio || 1, 2), W = Math.max(1, r.width), H = Math.max(1, r.height);
+  const pw = Math.ceil(W * dpr), ph = Math.ceil(H * dpr);
+  if (wallC.width !== pw || wallC.height !== ph) { wallC.width = pw; wallC.height = ph; dryC.width = pw; dryC.height = ph; dryStamp = -1; }
+  const live = !reduceMotion;
+  // a new stroke every few seconds: the roller goes to it and lays it down
+  if (live && t >= roller.next) {
+    const st = newStroke(0.36, 0.58, t); strokes.push(st);
+    roller.tx = st.x; roller.ty = st.y; roller.next = t + 2.8 + wr() * 1.8;
+    if (strokes.length > 260) strokes.splice(0, 1);
+  }
+  roller.x += (roller.tx - roller.x) * 0.05; roller.y += (roller.ty - roller.y) * 0.05;
+  // the dry patchwork, repainted only when something has dried since
+  const dry = strokes.filter((st) => t - st.born >= 4);
+  if (dry.length !== dryCount || dryStamp < 0) {
+    dryCount = dry.length; dryStamp = t;
+    dctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dctx2.fillStyle = WALL; dctx2.fillRect(0, 0, W, H);
+    dctx2.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    for (let i = 0; i < 30; i++) dctx2.fillRect(0, (i * 0.033 + 0.01) * H, W, 4 + (i % 3) * 4);
+    for (const st of dry) brush(dctx2, st, W, H, 1, st.tint, 0.86);   // (no canvas blur filter here: on a big wall it froze the page)
+  }
+  const c = wctx;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(dryC, 0, 0);
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // the strokes still wet: dark blue under the roller, the colour coming through as they dry
+  for (const st of strokes) {
+    const age = t - st.born;
+    if (age >= 4) continue;
+    const k = Math.min(1, age / 1.4);
+    brush(c, st, W, H, k, WET, 0.92);
+    if (age > 1.4) brush(c, st, W, H, 1, st.tint, 0.86 * Math.min(1, (age - 1.4) / 2.6));
+    if (age > 0.6) { c.fillStyle = WET; c.globalAlpha = 0.8 * Math.max(0, 1 - (age - 2) / 2); c.fillRect(st.x * W + st.w * W * 0.2, st.y * H + st.h * H * k / 2, 2.5, Math.min(70, (age - 0.6) * 22)); c.globalAlpha = 1; }
+  }
+  // the painter: from behind, under a white sun hat, red top, denim shorts, below the roller
+  const ground = H - 8, k = Math.min(1, Math.max(0.6, H / 820)) * 1.45;
+  const rx = roller.x * W, ry = roller.y * H;
+  const px = Math.min(W - 80 * k, Math.max(80 * k, rx - 24 * k));
+  c.save();
+  c.translate(px, ground); c.scale(k, k);
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  c.fillStyle = 'rgba(60, 70, 90, 0.12)'; c.beginPath(); c.ellipse(0, 0, 40, 6, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#d9a27f'; c.lineWidth = 15; c.beginPath(); c.moveTo(-11, -62); c.lineTo(-13, -4); c.moveTo(11, -62); c.lineTo(14, -4); c.stroke();
+  c.fillStyle = '#28446e'; c.beginPath(); c.roundRect(-27, -98, 54, 44, 8); c.fill();
+  c.fillStyle = '#b8282e'; c.beginPath(); c.roundRect(-26, -170, 52, 80, 14); c.fill();
+  c.fillStyle = '#9c1f26'; c.beginPath(); c.roundRect(-10, -172, 20, 18, 6); c.fill();
+  const reach = { x: (rx - px) / k, y: (ry - ground) / k };
+  // the right arm straight up the pole, the left hanging at her side
+  const hand = { x: 22 + Math.max(-10, Math.min(10, reach.x * 0.08)), y: -238 };
+  c.strokeStyle = '#d9a27f'; c.lineWidth = 11;
+  c.beginPath(); c.moveTo(22, -160); c.lineTo(hand.x, hand.y); c.stroke();
+  c.beginPath(); c.moveTo(-23, -160); c.lineTo(-30, -96); c.stroke();
+  c.save(); c.translate(0, -186); c.scale(1.5, 1.5);
+  curlScatter(c, (x, y) => Math.hypot(x, y * 0.9) < 15 * K.volume && y > -6, 77);
+  curls(c, 0, 0, 0.2, Math.PI - 0.2, 14 * K.volume);
+  c.restore();
+  c.fillStyle = '#f3f1ea'; c.beginPath(); c.ellipse(0, -198, 40, 11, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#faf8f2'; c.beginPath(); c.ellipse(0, -214, 24, 22, 0, Math.PI, Math.PI * 2); c.fill(); c.fillRect(-24, -214, 48, 16);
+  c.fillStyle = 'rgba(0,0,0,0.08)'; c.beginPath(); c.ellipse(0, -198, 40, 11, 0, 0, Math.PI); c.fill();
+  // the pole, from the raised hand up to the roller
+  c.strokeStyle = '#2b2b30'; c.lineWidth = 3.5; c.beginPath(); c.moveTo(hand.x, hand.y); c.lineTo(reach.x, reach.y + 6); c.stroke();
+  c.fillStyle = '#5b5f66'; c.beginPath(); c.roundRect(reach.x - 2, reach.y - 2, 4, 9, 2); c.fill();
+  c.fillStyle = WET; c.beginPath(); c.roundRect(reach.x - 28, reach.y - 8, 56, 14, 6); c.fill();
+  c.fillStyle = 'rgba(255,255,255,0.2)'; c.beginPath(); c.roundRect(reach.x - 25, reach.y - 6, 50, 4, 2); c.fill();
+  c.restore();
+}
 const hexCh = (hex, s) => (parseInt(hex.slice(1), 16) >> s) & 255;
 const shadeHex = (hex, f) => `rgb(${[16, 8, 0].map((s) => Math.max(0, Math.min(255, Math.round(hexCh(hex, s) * f)))).join(', ')})`;
 const alphaHex = (hex, a) => `rgba(${hexCh(hex, 16)}, ${hexCh(hex, 8)}, ${hexCh(hex, 0)}, ${a})`;
@@ -2359,6 +2588,68 @@ function placeWords(t) {
   const u = unitsPerPx(WORDS_D);
   wordsPlane.scale.set(wordsCss.w * u * sc, wordsCss.h * u * sc, 1);
 }
+// ---- the poem in the canopy -----------------------------------------------------
+// Two lines of Mary Oliver, hung in the wood itself about half way up the trees:
+// the leaves below them pass in front, the leaves above sit behind. The lines are
+// read from the ground and the climb goes up past them.
+const POEM = ['Instructions for living a life:', 'Pay attention.', 'Be astonished.', 'Tell about it.', 'Mary Oliver'];
+const poemCanvas = document.createElement('canvas');
+let poemTex = null;
+const poemMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, fog: false, toneMapped: false, opacity: 0 });
+const poemPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), poemMat);
+poemPlane.renderOrder = 2;   // after the canopy, so the leaves in front of it keep hiding it
+poemPlane.frustumCulled = false;
+camera.add(poemPlane);
+const poemCss = { w: 1, h: 1 };
+poemReady = true;
+function paintPoem() {
+  const dpr = Math.min(devicePixelRatio || 1, 2), big = P.poemSize, small = Math.round(P.poemSize * 0.8);
+  const fontBig = `400 ${big}px 'Inter', system-ui, -apple-system, sans-serif`, fontSmall = `400 ${small}px 'Inter', system-ui, -apple-system, sans-serif`;
+  const c = poemCanvas.getContext('2d');
+  const maxW = Math.min(Math.max(1, innerWidth) - 48, 760);
+  const rows = [];
+  POEM.forEach((line, i) => {
+    const attribution = i === POEM.length - 1;
+    c.font = attribution ? fontSmall : fontBig;
+    let row = '';
+    for (const word of line.split(' ')) { const trial = row ? `${row} ${word}` : word; if (c.measureText(trial).width > maxW && row) { rows.push({ text: row, attribution }); row = word; } else row = trial; }
+    if (row) rows.push({ text: row, attribution });
+  });
+  const lhBig = big * 1.55, lhSmall = small * 2.4;
+  poemCss.w = Math.ceil(Math.max(1, ...rows.map((r) => { c.font = r.attribution ? fontSmall : fontBig; return c.measureText(r.text).width; })) + 12);
+  poemCss.h = Math.ceil(rows.reduce((h, r) => h + (r.attribution ? lhSmall : lhBig), 0) + 12);
+  const pw = Math.ceil(poemCss.w * dpr), ph = Math.ceil(poemCss.h * dpr);
+  if (!poemTex || poemCanvas.width !== pw || poemCanvas.height !== ph) {
+    poemCanvas.width = pw; poemCanvas.height = ph;
+    if (poemTex) poemTex.dispose();
+    poemTex = new THREE.CanvasTexture(poemCanvas);
+    poemTex.colorSpace = THREE.SRGBColorSpace;
+    poemMat.map = poemTex; poemMat.needsUpdate = true;
+  }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, poemCss.w, poemCss.h);
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  let y = 6;
+  for (const r of rows) {
+    const lh = r.attribution ? lhSmall : lhBig;
+    c.font = r.attribution ? fontSmall : fontBig;
+    c.fillStyle = r.attribution ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.95)';
+    c.fillText(r.text, poemCss.w / 2, y + lh / 2);
+    y += lh;
+  }
+  poemTex.needsUpdate = true;
+}
+if (document.fonts && document.fonts.load) document.fonts.load("500 24px 'Inter'").then(paintPoem);
+function placePoem(t) {
+  const d = heightFor(P.poemPct / 100) - camera.position.y;   // how far above the lens the lines hang
+  if (d < 2.5) { poemMat.opacity = 0; return; }
+  poemPlane.position.set(0, 0, -d);
+  const u = unitsPerPx(d), sc = 1;
+  poemPlane.scale.set(poemCss.w * u * sc, poemCss.h * u * sc, 1);
+  // in from the arrival, out as the camera comes up to it
+  const inK = arrival.done ? Math.min(1, (t - (arrival.doneAt || t)) / 1.2) : 0;
+  poemMat.opacity = inK * sstep(2, 5, d);
+}
 // each loose leaf is painted into its own small canvas every frame (the same
 // strokes as before), shown on a sprite that sits nearer or farther than the words
 const LEAF_PX = 256, LEAF_DRAW = 200;
@@ -2376,6 +2667,29 @@ function dropLeafSprite(L) {
   if (!L.s3) return;
   camera.remove(L.s3.sp); L.s3.tex.dispose(); L.s3.sp.material.dispose(); L.s3 = null;
 }
+// ---- arrival ---------------------------------------------------------------------
+// The scene comes into view by itself as soon as it is ready: it fades up from
+// the blue, soft and a little over-bright at first, and pulls sharp as it arrives.
+// Nothing is asked of the visitor; scrolling opens once it is here.
+const ARRIVE_HOLD = 0, ARRIVE_FADE = 1.6;
+const arrival = { start: null, done: reduceMotion };
+document.documentElement.classList.toggle('locked', !arrival.done);
+document.documentElement.classList.toggle('arriving', !arrival.done);
+if (arrival.done) loadYouTube();
+function arrive(t) {
+  if (arrival.done) return;
+  if (arrival.start === null) { if (framesDrawn < 2) return; arrival.start = t; }
+  const k = Math.min(1, Math.max(0, (t - arrival.start - ARRIVE_HOLD) / ARRIVE_FADE));
+  const e = k * k * (3 - 2 * k), haze = 1 - e;
+  canvas.style.opacity = e.toFixed(3);
+  canvas.style.filter = haze > 0.01 ? `blur(${(haze * 12).toFixed(1)}px) brightness(${(1 + haze * 0.25).toFixed(2)})` : '';
+  if (k >= 1) {
+    arrival.done = true; arrival.doneAt = t;
+    canvas.style.opacity = ''; canvas.style.filter = '';
+    document.documentElement.classList.remove('locked', 'arriving');
+    loadYouTube();
+  }
+}
 let framesDrawn = 0;
 const clock = new THREE.Clock();
 // for checking from the console: __stage() reports where the camera is and what is being drawn
@@ -2387,12 +2701,23 @@ function frame() {
   const dt = Math.min(0.05, t - lastT); lastT = t;
   const yBefore = camera.position.y;
   windClock += dt * P.windSpeed;
+  flyCreatures(t, dt);
+  paintWall(t);
   leafMat.uniforms.uTime.value = windClock;
   leafMat.uniforms.uWind.value = reduceMotion ? 0 : P.wind;
   leafMat.uniforms.uDab.value.set(P.dabScale, P.dabStretch);
+  leafMat.uniforms.uDepth.value.set(P.depthFrom, P.depthTo, P.depthFade);
+  barkThin.uDepthB.value.set(P.depthFrom, P.depthTo, P.depthFade);
+  // the colour of the light: cool sky blue at 0, through a pale haze, to warm cream at 1; lightness on top
+  const cool = new THREE.Color('#8fb6ea'), warm = new THREE.Color('#f8e6b4');
+  const light = cool.clone().lerp(warm, P.lightWarmth).lerp(new THREE.Color('#ffffff'), P.lightBright);
+  leafMat.uniforms.uLight.value.copy(light);
+  barkThin.uSkyB.value.copy(light);
+  leafMat.uniforms.uTint.value = P.lightTint; barkThin.uTintB.value = P.lightTint;
   if (!reduceMotion && P.grainFps > 0 && t - lastGrain >= 1 / P.grainFps) { lastGrain = t; drawGrain(); }
 
   // the flight waits for the first frames to be on screen, so it is never missed
+  arrive(t);
   if (!flight && framesDrawn >= 2) launch();
   let roll = 0;
   if (flight) {
@@ -2405,7 +2730,11 @@ function frame() {
     if (Math.abs(scrollU - flight.smooth) < 0.0005) flight.smooth = scrollU;
     const u = QS.has('u') ? Number(QS.get('u')) : flight.smooth;   // ?u=0.4 holds the flight at that point, for testing
     const e = ease(u);
-    camera.position.y = flight.from + (GROUND_Y + P.rise - flight.from) * e;
+    // lying still, the view drifts upward on its own, very slowly, so the page has a pulse
+    // and a direction before anyone scrolls; the scroll takes that motion over
+    flight.idle = Math.min(1, (flight.idle || 0) + dt / 14);
+    const idleRise = reduceMotion ? 0 : 3.2 * flight.idle * flight.idle * (3 - 2 * flight.idle) * (1 - u);
+    camera.position.y = flight.from + idleRise + (GROUND_Y + P.rise - flight.from) * e;
     camera.position.x = P.camX; camera.position.z = P.camZ;
     roll = reduceMotion ? 0 : u * u * P.spiral;        // slow spiral as it climbs
     const baseFov = innerWidth > innerHeight ? P.fov : P.fovPortrait;
@@ -2420,11 +2749,10 @@ function frame() {
     // nor lands abruptly however the visitor scrolls
     sky.material.uniforms.uLift.value = smoother(wash);
     inkFor(sstep(0.0, 0.45, wash)); // the words turn with the sky
-    scrollcue.classList.toggle('show', scrollY < 24 && framesDrawn >= 2);   // an invitation, until the first scroll
+    scrollcue.classList.toggle('show', arrival.done && scrollY < 24);   // an invitation, until the first scroll
     // the words in the sky fade out as the work scrolls up toward them
     const gone = Math.min(1, Math.max(0, (scrollY - (innerHeight * (FLIGHT_VH() + REST_VH() * 0.35)) / 100) / Math.max(1, (innerHeight * REST_VH() * 0.65) / 100)));
     words.gone = gone;
-    if (u > 0.5) vignette.classList.add('lift'); else vignette.classList.remove('lift');
     if (camera.position.y < SKY_AT && skyStart !== null) { skyStart = null; say(null); }   // scrolled back down under the trees
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
@@ -2458,6 +2786,7 @@ function frame() {
   camera.up.set(Math.sin(roll), 0, -Math.cos(roll));
   camera.lookAt(target);
   placeWords(t);
+  placePoem(t);
   // entering 100%: the camera has just risen through the treetops
   const topY = heightFor(1) - 0.5; // a touch early, since the slider eases in and never quite lands
   if (yBefore < topY && camera.position.y >= topY) heroDue = true;
@@ -2484,8 +2813,8 @@ frame();
 // here runs for ordinary visitors.
 function applyLook() {
   // the grade, wash, leak and grain are read straight from P by the finishing pass every frame
-  vignette.style.setProperty('--vig', P.vignette);
   twigs.material.opacity = P.twigDark;
+  barkThin.uThin.value = P.thinBranch;
   document.querySelector('.track').style.height = `${100 + P.flightVh + P.restVh}vh`;
 }
 applyLook();
@@ -2507,7 +2836,6 @@ if (location.hash.includes('dials')) {
       ['brightness', 'brightness', 0.6, 1.4, 0.01],
       ['wash', 'amber wash', 0, 2, 0.01],
       ['leak', 'light leak', 0, 1, 0.01],
-      ['vignette', 'vignette', 0, 1, 0.01],
     ]],
     ['Movement', [
       ['wind', 'wind strength', 0, 4, 0.05],
@@ -2529,10 +2857,23 @@ if (location.hash.includes('dials')) {
       ['flightVh', 'scroll to climb, vh', 60, 500, 10],
       ['restVh', 'sky to read in, vh', 0, 200, 10],
     ]],
+    ['Poem', [
+      ['poemPct', 'height, % of trees', 10, 100, 1],
+      ['poemSize', 'size', 14, 48, 1, paintPoem],
+    ]],
+    ['Depth', [
+      ['depthFade', 'opacity fade with height', 0, 1, 0.01],
+      ['depthFrom', 'fading begins, units away', 2, 40, 1],
+      ['depthTo', 'deepest fade, units away', 10, 90, 1],
+      ['lightWarmth', 'light: blue 0 to warm 1', 0, 1, 0.01],
+      ['lightBright', 'light: brightness', 0, 1, 0.01],
+      ['lightTint', 'light: tint on the fade', 0, 1, 0.01],
+    ]],
     ['Canopy', [
       ['dabScale', 'leaf size', 0.3, 2.5, 0.05],
       ['dabStretch', 'leaf length', 0.4, 2.5, 0.05],
       ['twigDark', 'twig darkness', 0, 1, 0.05],
+      ['thinBranch', 'hide branches thinner than', 0, 0.3, 0.005],
     ]],
     ['Trees', [
       ['gather', 'trunks closer in, below', 0, 0.8, 0.01, placeTrees],
