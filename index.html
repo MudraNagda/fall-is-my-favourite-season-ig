@@ -129,7 +129,7 @@
   @media (prefers-reduced-motion: reduce) {
     .msg { transform: none; transition: opacity 0.5s ease; }
   }
-  .track { height: 334vh; }  /* the hero's screen, then 220vh of scrolling that climbs the trees, then a breath of sky */
+  .track { height: 260vh; }  /* the hero's screen, then 150vh of scrolling that climbs the trees, then a breath of sky */
   .site {
     position: relative;
     z-index: 5;               /* above every fixed hero layer */
@@ -167,9 +167,18 @@
   .menu a { color: inherit; text-decoration: none; }
   .menu a:hover, .menu a:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
   .menu.show { opacity: 1; pointer-events: auto; }
+  .creed { margin: 56px 0 0; font: 400 13px/1.6 'Inter', system-ui, sans-serif; opacity: 0.85; }
+  .creed em { font-style: italic; }
+  .creed span { display: block; margin-top: 8px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.6; }
+  /* the name, top left from the first frame, and a hairline at the right edge that fills as you climb */
+  .home { position: fixed; top: 0; left: 0; z-index: 8; padding: 22px 28px; font: 500 12px/1 'Inter', system-ui, sans-serif; color: var(--ui); text-decoration: none; }
+  .thread { position: fixed; right: 30px; top: 50%; width: 1px; height: 120px; margin-top: -60px; background: rgba(255, 255, 255, 0.2); opacity: 0; transition: opacity 0.8s ease; pointer-events: none; }
+  .thread i { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.85); transform-origin: top; transform: scaleY(0); }
+  .thread.show { opacity: 1; }
   @media (max-width: 560px) { .work li { grid-template-columns: 1fr; gap: 2px; } }
   /* the painter's wall: the canvas is clear where the sky still shows, plaster below the painted edge */
   .paint { position: relative; height: 100vh; min-height: 520px; }
+  .paint[hidden] { display: none; }
   .paint canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   /* footer: a raked-up pile of leaves on the ground, and whatever falls onto it */
   .foot { position: relative; min-height: max(78vh, 460px); overflow: hidden; }
@@ -304,6 +313,8 @@
 <div class="grain" id="grainWhite" style="mix-blend-mode: normal; opacity: 0; display: none" aria-hidden="true"></div>
 <p class="scrollcue" id="scrollcue" aria-hidden="true"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11M2.5 8 7 12.5 11.5 8"/></svg></p>
 <button class="replay" id="replay" type="button">replay</button>
+<a class="home" href="./">Mudra Nagda</a>
+<div class="thread" id="thread" aria-hidden="true"><i></i></div>
 <nav class="menu" id="menu" aria-label="Site"><a href="about.html">About</a><a href="experiments.html">Experiments</a><a href="https://www.linkedin.com/in/mudranagda/" target="_blank" rel="noopener">LinkedIn</a><a href="https://x.com/mudranagda" target="_blank" rel="noopener">X</a></nav>
 <button class="sound off" id="sound" type="button" aria-label="Sound" aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6H2z" fill="currentColor" stroke-width="1"/><g class="waves"><path d="M10.5 5.8a3 3 0 0 1 0 4.4"/><path d="M12.4 3.9a5.7 5.7 0 0 1 0 8.2"/></g><path class="slash" d="M10.6 6 14.4 10M14.4 6 10.6 10"/></svg></button>
 <!-- the height slider is hidden for now: remove the "hidden" attribute to bring it back -->
@@ -325,9 +336,11 @@
       <li><a href="https://www.vunetsystems.com" target="_blank" rel="noopener">Vunet Systems</a><p>Designed an explainable AI interface, data dashboards and a mobile app for enterprise finance.</p></li>
       <li><a href="https://www.medtronic.com" target="_blank" rel="noopener">Medtronic</a><p>Design for medical devices.</p></li>
     </ol>
+    <p class="creed"><em>Instructions for living a life:<br>Pay attention. Be astonished. Tell about it.</em><span>Mary Oliver</span></p>
   </section>
   <!-- the end of the page: the sky turns out to be a wall, still being painted -->
-  <footer class="paint" id="paint"><canvas id="wall" aria-hidden="true"></canvas></footer>
+  <!-- hidden for now; remove the "hidden" attribute to bring the painter back -->
+  <footer class="paint" id="paint" hidden><canvas id="wall" aria-hidden="true"></canvas></footer>
 </main>
 
 <script type="module">
@@ -354,9 +367,9 @@ const DEFAULTS = {
   saturate: 1.02, contrast: 0.98, sepia: 0.06, brightness: 0.98, wash: 0.3, leak: 0.4, vignette: 0,
   // movement
   wind: 1.3, windSpeed: 1.1, flight: (reduceMotion ? 4.6 : 6.4) / 1.2, spiral: 0.97, tighten: 22, drift: 0, clouds: 1.5,
-  fov: 96, fovPortrait: 108, startPct: 26, rise: 140, camX: 0, camZ: 0, flightVh: 220, restVh: 14, easePow: 2.4,
+  fov: 96, fovPortrait: 108, startPct: 26, rise: 140, camX: 0, camZ: -0.9, flightVh: 150, restVh: 10, easePow: 2.4,
   dabScale: 1, dabStretch: 1.25, twigDark: 0, thinBranch: 0.085,
-  poemPct: 46, poemSize: 16,
+  poemPct: 46, poemSize: 14,
   depthFrom: 10, depthTo: 30, depthFade: 0.9, lightWarmth: 0.3, lightBright: 0.35, lightTint: 0.15,
   gather: 0.09, gatherFrom: 0, gatherTo: 5, nudgeTree: 0, nudgeOut: 0, nudgeSpread: 1, nudgeShow: 0,
   // loose leaves
@@ -1173,6 +1186,7 @@ LEAF_TOP += 1;
 // the white that the rest of the site sits on. Scrolling back up returns the blue.
 const scrollcue = document.getElementById('scrollcue');
 const menu = document.getElementById('menu');
+const thread = document.getElementById('thread');
 let landed = false;
 history.scrollRestoration = 'manual';
 scrollTo(0, 0);
@@ -1718,103 +1732,127 @@ const KID_DEFAULTS = {
 const K = { ...KID_DEFAULTS };
 // ---- the painter --------------------------------------------------------------------
 // At the foot of the page the sky turns out to be a wall, and someone is still
-// painting it: a figure seen from behind in a white sun hat, red top and denim
-// shorts, with a roller on a long pole. The painted part is a patchwork of broad,
-// overlapping strokes in the wood's own colours, soft-edged like paint; below it
-// the wall is still bare. She keeps working: every few seconds the roller lays
-// down another stroke, wet and dark at first, drying into the patchwork.
+// painting it. The sky itself is the paint: above the roller's ragged edge the
+// real sky shows through, with the marks of the roller in it; below is bare
+// plaster, lit from the upper left like the wood. She is seen from behind in a
+// white sun hat, red top and denim shorts, a roller on a long pole, drawn with
+// light and shade rather than flat colour, and she keeps rolling the blue on.
 const wallEl = document.getElementById('paint'), wallC = document.getElementById('wall');
 const wctx = wallC.getContext('2d');
-const WALL = '#c6d2dc', WET = '#2f6ea6';
-const STROKE_TINTS = ['#5aa88a', '#5aa88a', '#7fbf9b', '#4f9fa6', '#6fa7d8', '#a9c7e6', '#c9d94a', '#e3e04a', '#8fc0e0', '#dfe8ee', '#f0b8c6', '#6a9ed2', '#9ccfb4'];
+const SKY_PAINT = '#3a80d8', SKY_WET = '#2a66b8';
 const wr = mulberry(1212);
-const newStroke = (y0, y1, born) => ({ x: wr() * 1.04 - 0.02, y: y0 + wr() * (y1 - y0), w: 0.08 + wr() * 0.14, h: 0.07 + wr() * 0.12, rot: (wr() - 0.5) * 0.16, tint: STROKE_TINTS[Math.floor(wr() * STROKE_TINTS.length)], seed: wr() * 1000, born });
-const strokes = [];
-for (let i = 0; i < 150; i++) strokes.push(newStroke(-0.06, 0.52, -100));   // the part already painted, long dry
-const roller = { x: 0.5, y: 0.45, tx: 0.5, ty: 0.45, next: 0 };
-// the dry patchwork is painted once into its own canvas and only repainted when a stroke dries
-const dryC = document.createElement('canvas'); const dctx2 = dryC.getContext('2d');
-let dryStamp = -1, dryCount = 0;
-function brush(c, st, W, H, k, tint, alpha) {
-  // one stroke: a few overlapping soft-cornered blocks, so the edge is broken like a loaded roller's
-  const sx = st.x * W, sy = st.y * H, sw = st.w * W, sh = st.h * H * k;
-  c.save(); c.translate(sx, sy); c.rotate(st.rot);
-  c.fillStyle = tint; c.globalAlpha = alpha;
-  let r = st.seed;
-  const n = () => { r = (r * 9301 + 49297) % 233280; return r / 233280; };
-  for (let j = 0; j < 4; j++) { const ox = (n() - 0.5) * sw * 0.35, oy = (n() - 0.5) * sh * 0.3; c.beginPath(); c.roundRect(-sw / 2 + ox, -sh / 2 + oy, sw * (0.7 + n() * 0.35), sh * (0.7 + n() * 0.35), 5); c.fill(); }
-  // the drag of the roller through it: faint lighter and darker bands
-  c.globalAlpha = alpha * 0.14;
-  for (let j = 0; j < 5; j++) { c.fillStyle = j % 2 ? '#ffffff' : '#000000'; c.fillRect(-sw / 2 + 4, -sh / 2 + (j + 0.5) * (sh / 5), sw - 8, 3); }
-  c.restore();
-}
+// plaster texture, made once
+const plasterTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  for (let i = 0; i < 2600; i++) { x.fillStyle = `rgba(${wr() < 0.5 ? '255,255,255' : '60,50,40'}, ${(0.02 + wr() * 0.05).toFixed(3)})`; x.fillRect(wr() * 256, wr() * 256, 1 + wr() * 3, 1 + wr() * 2); }
+  for (let i = 0; i < 40; i++) { x.fillStyle = `rgba(80,70,60,${(0.015 + wr() * 0.02).toFixed(3)})`; x.fillRect(wr() * 256, 0, 1 + wr() * 2, 256); }
+  return wctx.createPattern(c, 'repeat');
+})();
+const roller = { x: 0.5, next: 0, from: 0.5, to: 0.5, at: 0 };
+const passes = [];   // the roller's recent passes: [x, how far down it went, when]
 function paintWall(t) {
+  if (wallEl.hidden) return;
   const r = wallEl.getBoundingClientRect();
   if (r.top > innerHeight + 40 || r.bottom < -40) return;   // off screen: nothing to do
   const dpr = Math.min(devicePixelRatio || 1, 2), W = Math.max(1, r.width), H = Math.max(1, r.height);
-  const pw = Math.ceil(W * dpr), ph = Math.ceil(H * dpr);
-  if (wallC.width !== pw || wallC.height !== ph) { wallC.width = pw; wallC.height = ph; dryC.width = pw; dryC.height = ph; dryStamp = -1; }
-  const live = !reduceMotion;
-  // a new stroke every few seconds: the roller goes to it and lays it down
-  if (live && t >= roller.next) {
-    const st = newStroke(0.36, 0.58, t); strokes.push(st);
-    roller.tx = st.x; roller.ty = st.y; roller.next = t + 2.8 + wr() * 1.8;
-    if (strokes.length > 260) strokes.splice(0, 1);
-  }
-  roller.x += (roller.tx - roller.x) * 0.05; roller.y += (roller.ty - roller.y) * 0.05;
-  // the dry patchwork, repainted only when something has dried since
-  const dry = strokes.filter((st) => t - st.born >= 4);
-  if (dry.length !== dryCount || dryStamp < 0) {
-    dryCount = dry.length; dryStamp = t;
-    dctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    dctx2.fillStyle = WALL; dctx2.fillRect(0, 0, W, H);
-    dctx2.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    for (let i = 0; i < 30; i++) dctx2.fillRect(0, (i * 0.033 + 0.01) * H, W, 4 + (i % 3) * 4);
-    for (const st of dry) brush(dctx2, st, W, H, 1, st.tint, 0.86);   // (no canvas blur filter here: on a big wall it froze the page)
-  }
+  if (wallC.width !== Math.ceil(W * dpr) || wallC.height !== Math.ceil(H * dpr)) { wallC.width = Math.ceil(W * dpr); wallC.height = Math.ceil(H * dpr); }
   const c = wctx;
-  c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(dryC, 0, 0);
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  // the strokes still wet: dark blue under the roller, the colour coming through as they dry
-  for (const st of strokes) {
-    const age = t - st.born;
-    if (age >= 4) continue;
-    const k = Math.min(1, age / 1.4);
-    brush(c, st, W, H, k, WET, 0.92);
-    if (age > 1.4) brush(c, st, W, H, 1, st.tint, 0.86 * Math.min(1, (age - 1.4) / 2.6));
-    if (age > 0.6) { c.fillStyle = WET; c.globalAlpha = 0.8 * Math.max(0, 1 - (age - 2) / 2); c.fillRect(st.x * W + st.w * W * 0.2, st.y * H + st.h * H * k / 2, 2.5, Math.min(70, (age - 0.6) * 22)); c.globalAlpha = 1; }
+  c.clearRect(0, 0, W, H);
+  const edge = H * 0.4, stroke = Math.max(48, W / 24);
+  const colTop = (i) => edge + Math.sin(i * 1.7) * 8 + Math.sin(i * 0.6 + 1) * 14 + ((i * 7) % 5) * 5;   // where each roller pass stopped
+  const edgeAt = (x) => colTop(Math.floor(x / stroke));
+  // the roller: every few seconds it moves to a new pass and runs it down
+  const live = !reduceMotion;
+  if (live && t >= roller.next) { roller.from = roller.x; roller.to = 0.08 + wr() * 0.84; roller.at = t; roller.next = t + 3.2 + wr() * 1.6; passes.push({ x: roller.to, at: t + 0.9 }); if (passes.length > 6) passes.shift(); }
+  const mv = Math.min(1, (t - roller.at) / 0.9), mk = mv * mv * (3 - 2 * mv);
+  roller.x = roller.from + (roller.to - roller.from) * mk;
+  const down = live ? Math.max(0, Math.sin((t - roller.at - 0.9) * 1.6)) : 0.5;   // after arriving, the roller runs down and back up
+  const rx = roller.x * W, ry = edgeAt(rx) + down * stroke * 1.3;
+  // bare plaster below the edge, lit from the upper left
+  const pg = c.createLinearGradient(0, edge, 0, H);
+  pg.addColorStop(0, '#e9e4d8'); pg.addColorStop(1, '#cfc7b8');
+  c.fillStyle = pg;
+  c.beginPath(); c.moveTo(0, H); c.lineTo(0, edgeAt(0));
+  for (let x = 0; x <= W + stroke; x += stroke) { const i = Math.floor(x / stroke); c.lineTo(x, colTop(i)); c.lineTo(x + stroke, colTop(i)); }
+  c.lineTo(W, H); c.closePath(); c.fill();
+  c.save(); c.clip();   // the texture and the light only on the plaster, never on the sky
+  c.fillStyle = plasterTex; c.fillRect(0, 0, W, H);
+  const lg = c.createLinearGradient(0, 0, W, 0); lg.addColorStop(0, 'rgba(255,255,255,0.08)'); lg.addColorStop(1, 'rgba(40,30,20,0.12)');
+  c.fillStyle = lg; c.fillRect(0, 0, W, H);
+  c.restore();
+  // the roller's marks in the painted sky above the edge: faint vertical streaks that fade up into clean sky
+  for (let i = 0; i * stroke < W + stroke; i++) {
+    const x = i * stroke, top = colTop(i), g = c.createLinearGradient(0, top - stroke * 1.8, 0, top);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, `rgba(255,255,255,${(0.05 + ((i * 3) % 4) * 0.02).toFixed(3)})`);
+    c.fillStyle = g; c.fillRect(x + 2, top - stroke * 1.8, stroke - 4, stroke * 1.8);
+    c.fillStyle = 'rgba(20,50,110,0.07)'; c.fillRect(x, top - stroke * 1.2, 2, stroke * 1.2);
   }
-  // the painter: from behind, under a white sun hat, red top, denim shorts, below the roller
-  const ground = H - 8, k = Math.min(1, Math.max(0.6, H / 820)) * 1.45;
-  const rx = roller.x * W, ry = roller.y * H;
-  const px = Math.min(W - 80 * k, Math.max(80 * k, rx - 24 * k));
-  c.save();
-  c.translate(px, ground); c.scale(k, k);
-  c.lineCap = 'round'; c.lineJoin = 'round';
-  c.fillStyle = 'rgba(60, 70, 90, 0.12)'; c.beginPath(); c.ellipse(0, 0, 40, 6, 0, 0, Math.PI * 2); c.fill();
-  c.strokeStyle = '#d9a27f'; c.lineWidth = 15; c.beginPath(); c.moveTo(-11, -62); c.lineTo(-13, -4); c.moveTo(11, -62); c.lineTo(14, -4); c.stroke();
-  c.fillStyle = '#28446e'; c.beginPath(); c.roundRect(-27, -98, 54, 44, 8); c.fill();
-  c.fillStyle = '#b8282e'; c.beginPath(); c.roundRect(-26, -170, 52, 80, 14); c.fill();
-  c.fillStyle = '#9c1f26'; c.beginPath(); c.roundRect(-10, -172, 20, 18, 6); c.fill();
+  // a thin lip of thicker paint along the edge
+  c.strokeStyle = 'rgba(20,50,110,0.22)'; c.lineWidth = 2;
+  c.beginPath(); for (let x = 0; x <= W + stroke; x += stroke) { const i = Math.floor(x / stroke); c.moveTo(x, colTop(i) + 1); c.lineTo(x + stroke, colTop(i) + 1); } c.stroke();
+  // recent passes still wet: a band of darker, glossier blue under the edge, drying back to the wall's blue
+  for (const p of passes) {
+    const age = t - p.at; if (age < 0) continue;
+    const x = Math.floor((p.x * W) / stroke) * stroke, top = colTop(Math.floor(x / stroke)), len = Math.min(stroke * 1.3, Math.max(0, age) * 60);
+    const g = c.createLinearGradient(0, top, 0, top + len);
+    g.addColorStop(0, SKY_WET); g.addColorStop(1, SKY_PAINT);
+    c.fillStyle = g; c.globalAlpha = Math.max(0, 1 - age / 9); c.fillRect(x + 1, top - 2, stroke - 2, len + 2);
+    c.fillStyle = 'rgba(255,255,255,0.12)'; c.fillRect(x + 6, top, 3, len);
+    c.fillStyle = SKY_WET; c.fillRect(x + stroke * 0.35, top + len, 2.5, Math.min(50, age * 10));
+    c.globalAlpha = 1;
+  }
+  // the painter, from behind, lit from the upper left, with her shadow on the wall
+  const ground = H - 6, k = Math.min(1.1, Math.max(0.6, H / 820)) * 1.12;
+  const px = Math.min(W - 80 * k, Math.max(80 * k, rx - 26 * k));
   const reach = { x: (rx - px) / k, y: (ry - ground) / k };
-  // the right arm straight up the pole, the left hanging at her side
-  const hand = { x: 22 + Math.max(-10, Math.min(10, reach.x * 0.08)), y: -238 };
-  c.strokeStyle = '#d9a27f'; c.lineWidth = 11;
-  c.beginPath(); c.moveTo(22, -160); c.lineTo(hand.x, hand.y); c.stroke();
-  c.beginPath(); c.moveTo(-23, -160); c.lineTo(-30, -96); c.stroke();
-  c.save(); c.translate(0, -186); c.scale(1.5, 1.5);
-  curlScatter(c, (x, y) => Math.hypot(x, y * 0.9) < 15 * K.volume && y > -6, 77);
-  curls(c, 0, 0, 0.2, Math.PI - 0.2, 14 * K.volume);
-  c.restore();
-  c.fillStyle = '#f3f1ea'; c.beginPath(); c.ellipse(0, -198, 40, 11, 0, 0, Math.PI * 2); c.fill();
-  c.fillStyle = '#faf8f2'; c.beginPath(); c.ellipse(0, -214, 24, 22, 0, Math.PI, Math.PI * 2); c.fill(); c.fillRect(-24, -214, 48, 16);
-  c.fillStyle = 'rgba(0,0,0,0.08)'; c.beginPath(); c.ellipse(0, -198, 40, 11, 0, 0, Math.PI); c.fill();
-  // the pole, from the raised hand up to the roller
-  c.strokeStyle = '#2b2b30'; c.lineWidth = 3.5; c.beginPath(); c.moveTo(hand.x, hand.y); c.lineTo(reach.x, reach.y + 6); c.stroke();
-  c.fillStyle = '#5b5f66'; c.beginPath(); c.roundRect(reach.x - 2, reach.y - 2, 4, 9, 2); c.fill();
-  c.fillStyle = WET; c.beginPath(); c.roundRect(reach.x - 28, reach.y - 8, 56, 14, 6); c.fill();
-  c.fillStyle = 'rgba(255,255,255,0.2)'; c.beginPath(); c.roundRect(reach.x - 25, reach.y - 6, 50, 4, 2); c.fill();
-  c.restore();
+  const skin = (x0, y0, x1, y1) => { const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, '#dfae8b'); g.addColorStop(1, '#a9704f'); return g; };
+  const limb = (x0, y0, x1, y1, w0, w1, fill) => {
+    const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+    c.fillStyle = fill; c.beginPath();
+    c.moveTo(x0 + nx * w0 / 2, y0 + ny * w0 / 2); c.lineTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2); c.arc(x1, y1, w1 / 2, Math.atan2(ny, nx), Math.atan2(ny, nx) + Math.PI);
+    c.lineTo(x0 - nx * w0 / 2, y0 - ny * w0 / 2); c.arc(x0, y0, w0 / 2, Math.atan2(-ny, -nx), Math.atan2(-ny, -nx) + Math.PI); c.closePath(); c.fill();
+  };
+  const hand = { x: 24 + Math.max(-12, Math.min(12, reach.x * 0.06)), y: -250 };
+  const figure = (shadow) => {
+    c.save(); c.translate(px, ground); c.scale(k, k);
+    if (shadow) { c.translate(30, -6); c.scale(1.05, 0.98); }
+    const F = (f) => (shadow ? 'rgba(30,25,20,0.085)' : f);
+    // legs
+    limb(-11, -66, -13, -6, 17, 13, F(skin(-20, -60, 0, -60))); limb(11, -66, 14, -6, 17, 13, F(skin(0, -60, 24, -60)));
+    // shorts
+    c.fillStyle = F((() => { const g = c.createLinearGradient(-28, -100, 28, -56); g.addColorStop(0, '#3a5a8c'); g.addColorStop(1, '#213b63'); return g; })());
+    c.beginPath(); c.roundRect(-28, -104, 56, 46, 9); c.fill();
+    if (!shadow) { c.fillStyle = 'rgba(255,255,255,0.1)'; c.fillRect(-28, -104, 56, 5); c.fillStyle = 'rgba(0,0,0,0.18)'; c.fillRect(-1.5, -98, 3, 38); }
+    // the red top, shaded like cloth
+    c.fillStyle = F((() => { const g = c.createLinearGradient(-26, -180, 30, -100); g.addColorStop(0, '#cf3038'); g.addColorStop(0.55, '#b0242b'); g.addColorStop(1, '#7e181e'); return g; })());
+    c.beginPath(); c.roundRect(-27, -178, 54, 84, 15); c.fill();
+    if (!shadow) { c.strokeStyle = 'rgba(0,0,0,0.12)'; c.lineWidth = 2; c.beginPath(); c.moveTo(-8, -170); c.quadraticCurveTo(-4, -140, -10, -104); c.moveTo(12, -168); c.quadraticCurveTo(8, -140, 14, -106); c.stroke(); }
+    // arms: the right one straight up the pole, the left at her side
+    limb(23, -166, hand.x, hand.y, 13, 9, F(skin(10, -200, 40, -200)));
+    limb(-24, -166, -31, -102, 13, 9, F(skin(-40, -130, -16, -130)));
+    // hair under the hat
+    c.save(); c.translate(0, -192); c.scale(1.55, 1.55);
+    if (shadow) { c.fillStyle = 'rgba(30,25,20,0.085)'; c.beginPath(); c.arc(0, 2, 15 * K.volume, 0, Math.PI * 2); c.fill(); }
+    else { curlScatter(c, (x, y) => Math.hypot(x, y * 0.9) < 15 * K.volume && y > -5, 77); curls(c, 0, 1, 0.25, Math.PI - 0.25, 14 * K.volume);
+      const hg = c.createRadialGradient(-5, -3, 2, 0, 2, 18); hg.addColorStop(0, 'rgba(255,230,200,0.14)'); hg.addColorStop(1, 'rgba(20,10,5,0.38)'); c.fillStyle = hg; c.beginPath(); c.arc(0, 2, 16 * K.volume, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+    // the white sun hat: a wide brim, a soft crown, shade under the brim
+    c.fillStyle = F((() => { const g = c.createLinearGradient(-40, -208, 40, -196); g.addColorStop(0, '#fbfaf6'); g.addColorStop(1, '#d9d4c8'); return g; })());
+    c.beginPath(); c.ellipse(0, -204, 42, 12, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = F((() => { const g = c.createLinearGradient(-24, -236, 24, -206); g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#d4cfc2'); return g; })());
+    c.beginPath(); c.ellipse(0, -220, 25, 22, 0, Math.PI, Math.PI * 2); c.fill(); c.fillRect(-25, -220, 50, 15);
+    if (!shadow) { c.fillStyle = 'rgba(0,0,0,0.12)'; c.beginPath(); c.ellipse(0, -204, 42, 12, 0, 0, Math.PI); c.fill(); c.fillStyle = 'rgba(0,0,0,0.1)'; c.fillRect(-25, -208, 50, 4); }
+    // the pole and the roller
+    c.strokeStyle = F('#262629'); c.lineWidth = 3.8; c.beginPath(); c.moveTo(hand.x, hand.y); c.lineTo(reach.x, reach.y + 6); c.stroke();
+    if (!shadow) { c.strokeStyle = 'rgba(255,255,255,0.3)'; c.lineWidth = 1; c.beginPath(); c.moveTo(hand.x - 1, hand.y); c.lineTo(reach.x - 1, reach.y + 6); c.stroke(); }
+    c.fillStyle = F('#6a6e75'); c.beginPath(); c.roundRect(reach.x - 2, reach.y - 2, 4, 10, 2); c.fill();
+    c.fillStyle = F((() => { const g = c.createLinearGradient(0, reach.y - 8, 0, reach.y + 7); g.addColorStop(0, '#4a8fe0'); g.addColorStop(0.5, SKY_WET); g.addColorStop(1, '#1c4a8a'); return g; })());
+    c.beginPath(); c.roundRect(reach.x - 30, reach.y - 8, 60, 15, 7); c.fill();
+    c.restore();
+  };
+  figure(true); figure(false);
 }
 const hexCh = (hex, s) => (parseInt(hex.slice(1), 16) >> s) & 255;
 const shadeHex = (hex, f) => `rgb(${[16, 8, 0].map((s) => Math.max(0, Math.min(255, Math.round(hexCh(hex, s) * f)))).join(', ')})`;
@@ -2592,7 +2630,8 @@ function placeWords(t) {
 // Two lines of Mary Oliver, hung in the wood itself about half way up the trees:
 // the leaves below them pass in front, the leaves above sit behind. The lines are
 // read from the ground and the climb goes up past them.
-const POEM = ['Instructions for living a life:', 'Pay attention.', 'Be astonished.', 'Tell about it.', 'Mary Oliver'];
+// what hangs in the canopy: a greeting, and the name under it in the smaller size
+const POEM = ['Hello, internet stranger. Nice of you to stop by.', 'The leaves are out, stay a while.'];
 const poemCanvas = document.createElement('canvas');
 let poemTex = null;
 const poemMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, fog: false, toneMapped: false, opacity: 0 });
@@ -2609,7 +2648,7 @@ function paintPoem() {
   const maxW = Math.min(Math.max(1, innerWidth) - 48, 760);
   const rows = [];
   POEM.forEach((line, i) => {
-    const attribution = i === POEM.length - 1;
+    const attribution = false;   // all the lines are read at the same size
     c.font = attribution ? fontSmall : fontBig;
     let row = '';
     for (const word of line.split(' ')) { const trial = row ? `${row} ${word}` : word; if (c.measureText(trial).width > maxW && row) { rows.push({ text: row, attribution }); row = word; } else row = trial; }
@@ -2753,6 +2792,8 @@ function frame() {
     // the words in the sky fade out as the work scrolls up toward them
     const gone = Math.min(1, Math.max(0, (scrollY - (innerHeight * (FLIGHT_VH() + REST_VH() * 0.35)) / 100) / Math.max(1, (innerHeight * REST_VH() * 0.65) / 100)));
     words.gone = gone;
+    thread.classList.toggle('show', arrival.done && gone < 0.5);
+    thread.firstElementChild.style.transform = `scaleY(${u.toFixed(3)})`;
     if (camera.position.y < SKY_AT && skyStart !== null) { skyStart = null; say(null); }   // scrolled back down under the trees
     if (camera.position.y >= SKY_AT && skyStart === null) {
       skyStart = t;
